@@ -6,7 +6,7 @@
 
 Runs on your machine. No account, no daemon, no network.
 
-[![status](https://img.shields.io/badge/status-pre--release-FF9500)](#not-released-yet)
+[![npm](https://img.shields.io/npm/v/pandev?label=beta&color=2ea44f)](https://www.npmjs.com/package/pandev)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-333)](#requirements)
 [![license](https://img.shields.io/badge/license-proprietary-333)](LICENSE)
 
@@ -18,13 +18,16 @@ npx pandev
 
 </div>
 
-> ### Not released yet
+> ### Beta is live
 >
-> The package is not on npm, so the command above will not work — yet. This repository is up
-> early so you can read what the tool does, how it is licensed, and how to check its privacy
-> claims before deciding whether to run it.
+> `npx pandev` runs the current beta on macOS (Apple Silicon and Intel) and Linux x64 —
+> no install step, nothing else to set up. The Windows npm package is not published yet;
+> on Windows use the beta installer from PowerShell:
+> `iwr https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli-beta/main/install-experimental.ps1 -UseBasicParsing | iex`
+> (the command there is `pandev cost`).
 >
-> Watch this repository, or [pandev.io/cli](https://pandev.io/cli), for the release.
+> Beta means the numbers are already trustworthy — the parsers are verified against live
+> logs — but command names and output may still change between releases.
 
 ---
 

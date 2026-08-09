@@ -136,9 +136,9 @@ per-task attribution is switched off and you get totals only.
 Reads logs from:
 
 - Claude Code — `~/.claude/projects`
+- Codex CLI — `~/.codex/sessions`
 - opencode — `~/.local/share/opencode/opencode.db`, read-only via your local `sqlite3`
 - ZCode — `~/.zcode/cli/db/db.sqlite`, read-only via your local `sqlite3`
-- Codex CLI — `~/.codex/sessions` (beta: the parser has not been verified against live logs yet)
 
 Nothing else is scanned.
 

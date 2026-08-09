@@ -11,16 +11,16 @@ Runs on your machine. No account, no daemon, no network.
 [![license](https://img.shields.io/badge/license-proprietary-333)](LICENSE)
 
 ```
-npx pandev
+npx pandev@beta
 ```
 
-[Website](https://pandev.io/cli) · [How to verify the privacy claim](docs/VERIFY.md) · [Changelog](CHANGELOG.md)
+**[pandev-metrics.com/cli](https://pandev-metrics.com/cli)** · **[по-русски](https://pandev-metrics.com/ru/cli)** · [How to verify the privacy claim](docs/VERIFY.md) · [Changelog](CHANGELOG.md)
 
 </div>
 
 > ### Beta is live
 >
-> `npx pandev` runs the current beta on macOS (Apple Silicon and Intel) and Linux x64 —
+> `npx pandev@beta` runs the current beta on macOS (Apple Silicon and Intel) and Linux x64 —
 > no install step, nothing else to set up. The Windows npm package is not published yet;
 > on Windows use the beta installer from PowerShell:
 > `iwr https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli-beta/main/install-experimental.ps1 -UseBasicParsing | iex`
@@ -94,16 +94,16 @@ itself.
 
 | | |
 |---|---|
-| `npx pandev` | summary for the last 14 days |
-| `npx pandev today` | today only |
-| `npx pandev task` | cost per task |
-| `npx pandev task WEB-812` | one task: every prompt, time spent, files touched, tools used |
-| `npx pandev files` | cost by file, with edit rounds |
-| `npx pandev models` | cost and cache behaviour per model |
-| `npx pandev why cache` | how prompt caching actually played out |
-| `npx pandev why ratio` | context read per unit of output |
-| `npx pandev web` | build and open the dashboard |
-| `npx pandev privacy` | what is read, and what leaves this machine |
+| `npx pandev@beta` | summary for the last 14 days |
+| `npx pandev@beta today` | today only |
+| `npx pandev@beta task` | cost per task |
+| `npx pandev@beta task WEB-812` | one task: every prompt, time spent, files touched, tools used |
+| `npx pandev@beta files` | cost by file, with edit rounds |
+| `npx pandev@beta models` | cost and cache behaviour per model |
+| `npx pandev@beta why cache` | how prompt caching actually played out |
+| `npx pandev@beta why ratio` | context read per unit of output |
+| `npx pandev@beta web` | build and open the dashboard |
+| `npx pandev@beta privacy` | what is read, and what leaves this machine |
 
 Add `--json` to any command for machine-readable output, `--days N` to change the window.
 
@@ -122,7 +122,7 @@ So, plainly:
   created `0600`, owner-only, in your own home directory. It contains your prompt text, so
   treat it like the logs it came from.
 
-`npx pandev privacy` prints the full list of what is read and what is taken from it.
+`npx pandev@beta privacy` prints the full list of what is read and what is taken from it.
 
 **And here is how to check that for yourself, without trusting us** — network activity is
 observable from outside the process, so the claim is verifiable even though this is not open
@@ -136,7 +136,9 @@ per-task attribution is switched off and you get totals only.
 Reads logs from:
 
 - Claude Code — `~/.claude/projects`
-- Codex CLI — `~/.codex/sessions`
+- opencode — `~/.local/share/opencode/opencode.db`, read-only via your local `sqlite3`
+- ZCode — `~/.zcode/cli/db/db.sqlite`, read-only via your local `sqlite3`
+- Codex CLI — `~/.codex/sessions` (beta: the parser has not been verified against live logs yet)
 
 Nothing else is scanned.
 
@@ -147,7 +149,7 @@ questions about *your* work.
 
 If the question turned into "how does this compare across the team", "which projects burn the
 most", or "what does AI actually cost us per delivered ticket" — that is
-[PanDev Metrics](https://pandev.io), and it is a different product.
+[PanDev Metrics](https://pandev-metrics.com), and it is a different product.
 
 ## License
 
@@ -160,5 +162,5 @@ invoice. Reconcile against your provider's own billing.
 ---
 
 <div align="center">
-<sub>Built by <a href="https://pandev.io">PanDev</a> · Found a bug? <a href="../../issues/new/choose">Open an issue</a></sub>
+<sub>Built by <a href="https://pandev-metrics.com">PanDev</a> · <a href="https://pandev-metrics.com/cli">pandev-metrics.com/cli</a> · Found a bug? <a href="../../issues/new/choose">Open an issue</a></sub>
 </div>

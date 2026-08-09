@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest something this tool should be able to answer
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things this tool will not do, so you don't spend time writing them up:
+
+        - **Send anything anywhere.** No telemetry, no update check, no sync. That constraint is
+          the product, not an oversight.
+        - **Aggregate across a team.** It reads one machine and answers questions about one
+          person's work. Cross-team reporting is [PanDev Metrics](https://pandev.io).
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What question do you want answered?
+      description: |
+        Describe the question, not the feature. "Which of my tasks got more expensive after I
+        switched models" tells us more than "add a comparison flag".
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you answer it today?
+      description: Manually, with another tool, or not at all.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Which agent do you use?
+      multiple: true
+      options:
+        - Claude Code
+        - Codex CLI
+        - Something else
+    validations:
+      required: false

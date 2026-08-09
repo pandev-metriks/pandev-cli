@@ -1,0 +1,57 @@
+pandev — License
+
+Copyright (c) 2026 PanDev. All rights reserved.
+
+1. Grant of use
+
+   You are granted a non-exclusive, non-transferable, royalty-free right to
+   download, install and run this software, in unmodified form, on machines
+   you own or control, for any purpose including commercial use.
+
+2. Restrictions
+
+   You may not:
+
+   a. redistribute, sublicense, sell, rent or lease this software, in whole
+      or in part, whether modified or not;
+   b. create derivative works from it, or incorporate any part of it into
+      another product;
+   c. remove or alter this license, copyright notices, or attribution.
+
+3. Verification is expressly permitted
+
+   This software is distributed as a compiled binary; its source code is not
+   published. It nevertheless makes specific claims about what it reads and
+   about the fact that it transmits nothing.
+
+   Those claims are meant to be checked. Nothing in this license restricts you
+   from observing, measuring or restricting this software as it runs on your
+   own machine — including monitoring its network activity, running it with
+   network access removed, tracing the files and system calls it uses, and
+   publishing what you find.
+
+   If your observations contradict our claims, please tell us; see SECURITY.md.
+
+4. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+   OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+5. Cost figures
+
+   Cost figures produced by this software are estimates computed from provider
+   rate tables that may change without notice. They are not an invoice and
+   carry no guarantee of accuracy. Always reconcile against your provider's
+   own billing.
+
+6. Your data
+
+   This software reads files on your machine and transmits nothing. It has no
+   network client and collects no telemetry of any kind. Files it writes — the
+   dashboard produced by `pandev web` — may contain your prompt text; you are
+   responsible for how you store and share them.

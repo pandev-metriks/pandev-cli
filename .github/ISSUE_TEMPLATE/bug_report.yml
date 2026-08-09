@@ -1,0 +1,65 @@
+name: Bug report
+description: Something is broken, crashes, or shows a number that cannot be right
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you paste anything: **command output can contain your prompt text**, especially
+        from `pandev task <KEY>` and the dashboard. Redact it, or describe the shape of the
+        problem instead of pasting it.
+
+        If this is about network activity or data leaving your machine, please close this and
+        [file it privately](../../security/advisories/new) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `npx pandev --version`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x64)
+        - Linux (arm64)
+        - Windows
+        - Other / WSL
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: "npx pandev task WEB-812 --days 30"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: |
+        Helpful and safe to share — none of this contains prompt text.
+      value: |
+        - Which agent produced the logs: Claude Code / Codex CLI / both
+        - `git --version`:
+        - Is the work in a git repository:
+        - Terminal (iTerm2, Windows Terminal, cmd.exe, ssh session, …):
+    validations:
+      required: false

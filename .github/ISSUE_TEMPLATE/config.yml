@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue — anything touching your data
+    url: https://github.com/pandev-metriks/pandev/security/advisories/new
+    about: Outbound network activity, prompt text leaking, file permissions. Please do not use a public issue.
+  - name: Verify the privacy claim yourself
+    url: https://github.com/pandev-metriks/pandev/blob/main/docs/VERIFY.md
+    about: How to confirm the tool sends nothing, without reading the source.
+  - name: Team and company analytics
+    url: https://pandev.io
+    about: This CLI is single-player by design. Cross-team reporting is a different product.

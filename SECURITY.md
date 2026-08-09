@@ -2,7 +2,7 @@
 
 ## Reporting
 
-Email **security@pandev.io**. If you prefer, open a
+Email **admin@pandev.io**. If you prefer, open a
 [draft security advisory](../../security/advisories/new) instead — that keeps the report
 private until a fix ships.
 

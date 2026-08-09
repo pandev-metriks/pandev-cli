@@ -6,7 +6,7 @@
 
 Runs on your machine. No account, no daemon, no network.
 
-[![npm](https://img.shields.io/npm/v/pandev?color=00A3FF&label=npm)](https://www.npmjs.com/package/pandev)
+[![status](https://img.shields.io/badge/status-pre--release-FF9500)](#not-released-yet)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-333)](#requirements)
 [![license](https://img.shields.io/badge/license-proprietary-333)](LICENSE)
 
@@ -17,6 +17,14 @@ npx pandev
 [Website](https://pandev.io/cli) · [How to verify the privacy claim](docs/VERIFY.md) · [Changelog](CHANGELOG.md)
 
 </div>
+
+> ### Not released yet
+>
+> The package is not on npm, so the command above will not work — yet. This repository is up
+> early so you can read what the tool does, how it is licensed, and how to check its privacy
+> claims before deciding whether to run it.
+>
+> Watch this repository, or [pandev.io/cli](https://pandev.io/cli), for the release.
 
 ---
 

@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security issue — anything touching your data
-    url: https://github.com/pandev-metriks/pandev/security/advisories/new
+    url: https://github.com/pandev-metriks/pandev-cli/security/advisories/new
     about: Outbound network activity, prompt text leaking, file permissions. Please do not use a public issue.
   - name: Verify the privacy claim yourself
-    url: https://github.com/pandev-metriks/pandev/blob/main/docs/VERIFY.md
+    url: https://github.com/pandev-metriks/pandev-cli/blob/main/docs/VERIFY.md
     about: How to confirm the tool sends nothing, without reading the source.
   - name: Team and company analytics
     url: https://pandev.io

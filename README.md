@@ -29,7 +29,7 @@ npx pandev
 ---
 
 <div align="center">
-  <img src="assets/summary.png" alt="pandev summary: payback multiple against subscription price, and where the token volume actually goes — cache reads, cache writes, fresh input, output" width="720">
+  <img src="assets/by-task.png" alt="pandev task: cost, call count, days and git branch for each ticket, with the unattributed remainder stated openly" width="720">
 </div>
 
 ---
@@ -41,30 +41,51 @@ Your agent bills you per token. Your work is organised in tasks. Nothing connect
 Every tool in this space reports *sessions*: "yesterday you spent $61." Useful once. It never
 answers the question you actually have — **which piece of work was expensive, and why.**
 
-## What this does differently
+## Which task cost what
 
-**Cost lands on the task, not the session.** A session wanders across three tickets and two
-branches. `pandev` splits it at every prompt you typed and attributes each slice to the task
-that was actually being worked on.
+That is the table above, and it is the whole point of this tool.
 
-**It recovers the branch that agents don't record.** Claude Code writes `HEAD` into its logs
-instead of a branch name — every single event. So per-task numbers built naively from those
-logs are wrong, and wrong by a lot: on our own data one task was overstated **70×**. `pandev`
-reconstructs the real branch at each timestamp from `git reflog`, which is what makes the
-attribution trustworthy.
+Note its last line. Work that happened outside a repository, or on a branch with no ticket key
+in its name, **cannot** be attributed — so it is reported as its own number instead of being
+spread across the tasks to make the table look complete. `pandev task` breaks that remainder
+down by project, so you can see what it consists of rather than guessing.
 
-**It shows the composition, not just the total.** Cache reads, cache writes, fresh input and
-output are four different prices. A bill that looks alarming is usually cache reads, and the
-fix is a prompt change — but you can't see that from one number.
+**Getting this right is harder than it looks.** Claude Code writes `HEAD` into its logs instead
+of a branch name — every single event, no exceptions. Per-task numbers built naively from those
+logs are wrong, and wrong by a lot: on our own data a single task came out overstated **70×**.
+`pandev` reconstructs the real branch at each timestamp from `git reflog`. That reconstruction
+is what makes the number above worth reading.
+
+## Then: which prompt inside that task
+
+Pick the expensive one and look inside it.
 
 <div align="center">
-  <img src="assets/by-task.png" alt="pandev task: cost, call count, days and git branch for each ticket, with the unattributed remainder stated openly" width="720">
+  <img src="assets/task-detail.png" alt="pandev task WEB-812: active time, prompt count, models used, and every prompt with its own cost and call count" width="720">
 </div>
 
-Note the last line. Work that happened outside a repository, or on a branch with no ticket key
-in its name, **cannot** be attributed — so it is reported as its own number rather than spread
-across the tasks to make the table look complete. `pandev task` breaks that remainder down by
-project so you can see what it consists of.
+One prompt took 38% of the whole task. That is the actionable unit — not the day, not the
+session, but the specific thing you asked for and what it cost to answer.
+
+You also get what the totals hide: **active** time against wall-clock, which model actually did
+the work, which editor it ran in, and how many rounds each file went through.
+
+Prompt text is read straight from your local logs to print this. It is never stored and never
+sent — see [Privacy](#privacy).
+
+## And underneath: where the volume goes
+
+<div align="center">
+  <img src="assets/summary.png" alt="pandev summary: payback multiple against subscription price, and where the token volume actually goes — cache reads, cache writes, fresh input, output" width="720">
+</div>
+
+Cache reads, cache writes, fresh input and output are four different prices. A bill that looks
+alarming is usually cache reads — and the fix for that is a prompt change, not less work. You
+cannot see any of that from a single total.
+
+If you are on a subscription rather than API billing, the same view tells you what your usage
+would have cost at API rates, which is the only honest way to know whether the plan pays for
+itself.
 
 ## Commands
 

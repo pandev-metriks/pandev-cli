@@ -34,6 +34,12 @@ normally.
 > Note: `npx` itself downloads the package, so fetch it once with plain `npx pandev --version`
 > before running the sandboxed command — otherwise you are testing npx's download, not the tool.
 
+> One exception by design: `pandev web` binds a **loopback-only** server on `127.0.0.1:4976`,
+> and `(deny network*)` blocks that bind too — so run the sandbox test with the report
+> commands (`pandev`, `pandev task`, `pandev files`, …), which are the ones that touch your
+> log data. What the dashboard adds on top is covered in
+> [the sockets you should expect](#the-sockets-you-should-expect) below.
+
 ### Linux
 
 Run it in a network namespace with no interfaces at all:
@@ -73,6 +79,20 @@ If you would rather observe than restrict, any of these work and require no trus
 - **`lsof -p <pid> -i`** while a long command such as `pandev web` is running.
 - **`tcpdump`** or **Wireshark** on your interface, filtered to the machine.
 - **Sysinternals TCPView** or **Process Monitor** on Windows.
+
+### The sockets you should expect
+
+`pandev web` (and the login dashboard service) is the one command that uses sockets at all,
+and everything it does stays on `127.0.0.1`:
+
+| What you will see | Why |
+|---|---|
+| `LISTEN` on `127.0.0.1:4976` (up to `:4985`) | the dashboard server — loopback only, unreachable from the network |
+| short-lived connects to `127.0.0.1:4976–4985` | the CLI probing whether its own server is already running |
+| your **browser** fetching `registry.npmjs.org` once per dashboard visit | an anonymous version check made by the served page, not by the binary; carries no data. The offline file `~/pandev-cost.html` never does this |
+
+An outbound connection **from the `pandev` process** to anything that is not `127.0.0.1`
+would contradict this page — report it.
 
 ---
 
@@ -119,23 +139,27 @@ sudo fs_usage -w -f filesystem | grep pandev
 strace -f -e trace=openat,connect -o /tmp/pandev.trace npx pandev
 ```
 
-The `connect` syscall should never appear in that Linux trace. That is the same claim as the
-sandbox test, seen from the other side.
+In that Linux trace of a report command, `connect` should never appear. For `pandev web` the
+only `connect` targets you should ever see are `127.0.0.1:4976`–`4985` — the CLI checking on
+its own server. Anything else contradicts this page.
 
 ---
 
-## The one thing it writes
+## What it writes
 
-`pandev web` creates a dashboard file in your home directory, mode `0600`, owner-only:
+`pandev web` creates a dashboard file in your home directory: `~/pandev-cost.html`,
+mode `0600`, owner-only. It is a single self-contained HTML file: fonts are embedded, it
+makes no network requests at all when you open it. **It contains your prompt text** — treat
+it exactly like the logs it was built from. Delete it whenever you like; the tool rebuilds
+it on demand.
 
-- macOS / Linux — `~/.pandev-reader/dashboard.html`
-- Windows — `%LOCALAPPDATA%\pandev-reader\dashboard.html`
+If you turn the login dashboard on (`pandev autostart on`, or by accepting the offer on the
+first interactive run), it also writes the login item itself:
 
-It is a single self-contained HTML file: fonts are embedded, there are no external requests
-when you open it. **It contains your prompt text** — treat it exactly like the logs it was
-built from. Delete it whenever you like; the tool rebuilds it on demand.
+- macOS — `~/Library/LaunchAgents/io.pandev.b2c.dashboard.plist` + `~/.config/pandev/b2c-dashboard.sh`
+- Linux — `~/.config/systemd/user/pandev-b2c-dashboard.service` + the same shim script
 
-Nothing else is ever written.
+`pandev autostart off` removes all of it. Nothing else is ever written.
 
 ---
 

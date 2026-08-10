@@ -4,7 +4,7 @@
 
 **What your AI coding agents actually cost — broken down by task, branch, model and file.**
 
-Runs on your machine. No account, no daemon, no network.
+Runs on your machine. No account, no telemetry — your logs never leave your laptop.
 
 [![npm](https://img.shields.io/npm/v/pandev?label=beta&color=2ea44f)](https://www.npmjs.com/package/pandev)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-333)](#requirements)
@@ -14,7 +14,7 @@ Runs on your machine. No account, no daemon, no network.
 npx pandev@beta
 ```
 
-**[pandev-metrics.com/cli](https://pandev-metrics.com/cli)** · **[по-русски](https://pandev-metrics.com/ru/cli)** · [How to verify the privacy claim](docs/VERIFY.md) · [Changelog](CHANGELOG.md)
+**[pandev-metrics.com/cli](https://pandev-metrics.com/cli)** · **[npm](https://www.npmjs.com/package/pandev)** · [How to verify the privacy claim](docs/VERIFY.md) · [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -90,6 +90,38 @@ If you are on a subscription rather than API billing, the same view tells you wh
 would have cost at API rates, which is the only honest way to know whether the plan pays for
 itself.
 
+## The dashboard: your numbers, on a bookmark
+
+`pandev web` serves all of the above as a live dashboard at **`http://127.0.0.1:4976`**
+(loopback only — invisible from outside your machine; if the port is busy it walks up to 4985)
+and opens it in your browser. Numbers refresh from your logs on every visit.
+
+<div align="center">
+  <img src="assets/dashboard.png" alt="pandev dashboard: spend at API rates, subscription payback, cache hit rate, task attribution, spend per day stacked by model, and the three attribution lenses" width="720">
+</div>
+
+The same three lenses as the terminal — tasks, branches, projects — with every prompt priced
+inside each task:
+
+<div align="center">
+  <img src="assets/dashboard-tasks.png" alt="pandev dashboard: cost by task with branch chips, and the drill-down for one task — active time, wall clock, prompts, model calls, tool calls, files" width="720">
+</div>
+
+<div align="center">
+  <img src="assets/dashboard-prompts.png" alt="pandev dashboard: every prompt inside a task with its own cost, share of the task, call count and tool count" width="720">
+</div>
+
+Two things worth knowing:
+
+- **It can meet you at login.** `pandev autostart on` registers a user-level login item
+  (launchd on macOS, systemd user unit on Linux) that starts the dashboard server and opens
+  it once when you log in. The first interactive run offers this automatically — and tells
+  you so; `pandev autostart off` removes every trace with one command. Bookmark the page
+  (⌘D / Ctrl+D) and your spend is one keystroke away.
+- **There is also a fully offline copy** — `~/pandev-cost.html`, a single self-contained
+  file (`0600`, owner-only) that makes zero network requests. It contains your prompt text,
+  so treat it like the logs it came from.
+
 ## Commands
 
 | | |
@@ -102,10 +134,13 @@ itself.
 | `npx pandev@beta models` | cost and cache behaviour per model |
 | `npx pandev@beta why cache` | how prompt caching actually played out |
 | `npx pandev@beta why ratio` | context read per unit of output |
-| `npx pandev@beta web` | build and open the dashboard |
+| `npx pandev@beta web` | dashboard at `http://127.0.0.1:4976` + offline copy (alias: `dashboard`) |
+| `npx pandev@beta autostart on\|off` | dashboard at login — on or off with one command |
+| `npx pandev@beta team` | team plans: book a live [demo](https://pandev-metrics.com/book) |
 | `npx pandev@beta privacy` | what is read, and what leaves this machine |
 
-Add `--json` to any command for machine-readable output, `--days N` to change the window.
+Add `--json` to any command for machine-readable output, `--days N` to change the window,
+`--no-open` to serve the dashboard without touching your browser.
 
 ## Privacy
 
@@ -115,12 +150,18 @@ including ours.
 
 So, plainly:
 
-- **No network code.** The binary opens no sockets, contacts no host, and carries no telemetry,
-  no version check and no analytics of any kind.
-- **No account.** There is nothing to sign into.
-- **Nothing is written** except the dashboard file you explicitly ask for with `pandev web` —
-  created `0600`, owner-only, in your own home directory. It contains your prompt text, so
-  treat it like the logs it came from.
+- **No outbound network calls from the binary.** No telemetry, no analytics, no accounts —
+  there is nothing to sign into and nothing that phones home.
+- **The dashboard server is loopback-only.** `pandev web` listens on `127.0.0.1:4976` and
+  answers your own browser. It is not reachable from the network, and it sends nothing out.
+- **One anonymous version check — from your browser, not the binary.** The served dashboard
+  page asks `registry.npmjs.org` for the latest version number so it can tell you when the
+  beta moved on. No data goes with it, and the offline file copy never does even that.
+- **The login item is opt-out and transparent.** The first interactive run enables the
+  dashboard-at-login service and says so in plain text; `pandev autostart off` removes it
+  completely. Pipes, `--json` and CI never trigger it.
+- **Nothing is written** except the dashboard file (`~/pandev-cost.html`, `0600`, owner-only)
+  and — if autostart is on — the login item itself.
 
 `npx pandev@beta privacy` prints the full list of what is read and what is taken from it.
 
@@ -131,7 +172,8 @@ source: **[docs/VERIFY.md](docs/VERIFY.md)**.
 ## Requirements
 
 Node 20 or newer for `npx`. Optional but recommended: `git` on your `PATH` — without it,
-per-task attribution is switched off and you get totals only.
+per-task attribution is switched off and you get totals only. The dashboard wants port
+`4976` free on localhost (it walks up to `4985` by itself if not).
 
 Reads logs from:
 
@@ -150,6 +192,7 @@ questions about *your* work.
 If the question turned into "how does this compare across the team", "which projects burn the
 most", or "what does AI actually cost us per delivered ticket" — that is
 [PanDev Metrics](https://pandev-metrics.com), and it is a different product.
+**[Book a live demo](https://pandev-metrics.com/book)** — or just run `npx pandev@beta team`.
 
 ## License
 
@@ -162,5 +205,5 @@ invoice. Reconcile against your provider's own billing.
 ---
 
 <div align="center">
-<sub>Built by <a href="https://pandev-metrics.com">PanDev</a> · <a href="https://pandev-metrics.com/cli">pandev-metrics.com/cli</a> · Found a bug? <a href="../../issues/new/choose">Open an issue</a></sub>
+<sub>Built by <a href="https://pandev-metrics.com">PanDev</a> · <a href="https://pandev-metrics.com/cli">pandev-metrics.com/cli</a> · <a href="https://www.npmjs.com/package/pandev">npm: pandev</a> · <a href="https://pandev-metrics.com/book">team demo</a> · Found a bug? <a href="../../issues/new/choose">Open an issue</a></sub>
 </div>

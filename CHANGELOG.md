@@ -2,15 +2,27 @@
 
 All notable changes to `pandev` are documented here. Dates are ISO, newest first.
 
-## [Unreleased]
+## 2.4.4 — 2026-08-10 (beta)
 
-First public release is being prepared. Nothing published yet.
+- **Live dashboard.** `pandev web` (alias `dashboard`) now serves your numbers at
+  `http://127.0.0.1:4976` — loopback only — and opens the browser. Data refreshes from your
+  logs on every visit. The fully offline copy `~/pandev-cost.html` is still written.
+- **Dashboard at login.** `pandev autostart on|off|status` — a user-level login item
+  (launchd / systemd user unit) starts the server and opens the dashboard once per login.
+  The first interactive run enables it and says so; one command removes it.
+- **`pandev team`** — the bridge to the team edition: opens
+  [pandev-metrics.com/book](https://pandev-metrics.com/book).
+- The served dashboard page shows an update chip when a newer beta is on npm (one anonymous
+  request to `registry.npmjs.org` from the browser; the offline file never does this).
+- Windows consoles: no more raw `←[36m` on legacy conhost, and ASCII stand-ins for glyphs
+  when the console codepage cannot render `✓ █ ═` (they printed as `?`).
+- Cross-links throughout: help and summary now point to the site, GitHub and npm; hints in
+  the npx channel use the `pandev …` form instead of `pandev cost …`.
 
-Planned for `0.1.0`:
+## 2.4.3 and earlier (beta)
 
-- Cost attribution per task, reconstructing the real git branch from `reflog` — agents record
-  `HEAD` rather than a branch name, which makes naive per-task numbers wrong by a wide margin
-- `task`, `today`, `files`, `models`, `why cache`, `why ratio`, `privacy`, `web`
-- Self-contained HTML dashboard with embedded fonts and no external requests
-- Claude Code and Codex CLI log sources
-- macOS (arm64, x64), Linux (x64, arm64) and Windows (x64) binaries
+The first public beta line. Cost attribution per task with the real branch reconstructed
+from `git reflog` (agents log `HEAD`, which makes naive per-task numbers wrong by a wide
+margin); `task`, `today`, `files`, `models`, `why cache`, `why ratio`, `privacy`, `web`;
+Claude Code, Codex CLI, opencode and ZCode log sources, each verified against live logs;
+macOS (arm64, x64) and Linux (x64) npm packages, Windows via the PowerShell beta installer.

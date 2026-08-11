@@ -1,6 +1,6 @@
 <div align="center">
 
-# pandev
+<img src="assets/hero.png" alt="pandev — what your AI coding agents actually cost" width="830">
 
 **What your AI coding agents actually cost — broken down by task, branch, model and file.**
 
@@ -18,24 +18,29 @@ npx pandev@beta
 
 </div>
 
-> ### Beta is live
->
-> `npx pandev@beta` runs the current beta on macOS (Apple Silicon and Intel) and Linux x64 —
-> no install step, nothing else to set up. The Windows npm package is not published yet;
-> on Windows use the beta installer from PowerShell:
-> `iwr https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli-beta/main/install-experimental.ps1 -UseBasicParsing | iex`
-> (the command there is `pandev cost`).
->
-> Beta means the numbers are already trustworthy — the parsers are verified against live
-> logs — but command names and output may still change between releases.
+> [!IMPORTANT]
+> **Beta is live.** `npx pandev@beta` runs the current beta on macOS (Apple Silicon and Intel)
+> and Linux x64 — no install step, nothing else to set up. Beta means the numbers are already
+> trustworthy — the parsers are verified against live logs — but command names and output may
+> still change between releases.
 
----
+<details>
+<summary><b>Windows</b> — the npm package is not published yet; use the beta installer from PowerShell</summary>
+<br>
+
+```powershell
+iwr https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli-beta/main/install-experimental.ps1 -UseBasicParsing | iex
+```
+
+The command it installs is `pandev cost`.
+
+</details>
 
 <div align="center">
-  <img src="assets/by-task.png" alt="pandev task: cost, call count, days and git branch for each ticket, with the unattributed remainder stated openly" width="720">
+  <img src="assets/compare.png" alt="Without pandev: one total, $2,140, is all your provider's console shows. With pandev: the same $2,140 broken down by task — PAY-1204 $842, AUTH-88 $488, INFRA-31 $301 — and by prompt inside each task" width="830">
 </div>
 
----
+<img src="assets/section-task.png" alt="01 · Which task cost what" width="830">
 
 ## The problem
 
@@ -43,6 +48,10 @@ Your agent bills you per token. Your work is organised in tasks. Nothing connect
 
 Every tool in this space reports *sessions*: "yesterday you spent $61." Useful once. It never
 answers the question you actually have — **which piece of work was expensive, and why.**
+
+<div align="center">
+  <img src="assets/by-task.png" alt="pandev task: cost, call count, days and git branch for each ticket, with the unattributed remainder stated openly" width="720">
+</div>
 
 ## Which task cost what
 
@@ -58,6 +67,8 @@ of a branch name — every single event, no exceptions. Per-task numbers built n
 logs are wrong, and wrong by a lot: on our own data a single task came out overstated **70×**.
 `pandev` reconstructs the real branch at each timestamp from `git reflog`. That reconstruction
 is what makes the number above worth reading.
+
+<img src="assets/section-prompt.png" alt="02 · Which prompt cost what" width="830">
 
 ## Then: which prompt inside that task
 
@@ -76,6 +87,8 @@ the work, which editor it ran in, and how many rounds each file went through.
 Prompt text is read straight from your local logs to print this. It is never stored and never
 sent — see [Privacy](#privacy).
 
+<img src="assets/section-volume.png" alt="03 · Where the volume goes" width="830">
+
 ## And underneath: where the volume goes
 
 <div align="center">
@@ -89,6 +102,8 @@ cannot see any of that from a single total.
 If you are on a subscription rather than API billing, the same view tells you what your usage
 would have cost at API rates, which is the only honest way to know whether the plan pays for
 itself.
+
+<img src="assets/section-dashboard.png" alt="04 · Your numbers, on a bookmark" width="830">
 
 ## The dashboard: your numbers, on a bookmark
 
@@ -122,6 +137,8 @@ Two things worth knowing:
   file (`0600`, owner-only) that makes zero network requests. It contains your prompt text,
   so treat it like the logs it came from.
 
+<img src="assets/section-commands.png" alt="05 · Every command" width="830">
+
 ## Commands
 
 | | |
@@ -141,6 +158,8 @@ Two things worth knowing:
 
 Add `--json` to any command for machine-readable output, `--days N` to change the window,
 `--no-open` to serve the dashboard without touching your browser.
+
+<img src="assets/section-privacy.png" alt="06 · Nothing leaves this machine" width="830">
 
 ## Privacy
 

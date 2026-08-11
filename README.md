@@ -6,7 +6,7 @@
 
 Runs on your machine. No account, no telemetry — your logs never leave your laptop.
 
-[![npm](https://img.shields.io/npm/v/pandev?label=beta&color=2ea44f)](https://www.npmjs.com/package/pandev)
+[![npm](https://img.shields.io/npm/v/pandev/beta?label=beta&color=2ea44f)](https://www.npmjs.com/package/pandev)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-333)](#requirements)
 [![license](https://img.shields.io/badge/license-proprietary-333)](LICENSE)
 

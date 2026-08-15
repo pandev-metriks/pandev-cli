@@ -148,6 +148,12 @@ jobs:
           java-version: 21
           cache: maven
 
+      # Full unit-test suite on THIS platform before anything is packaged —
+      # platform-specific breakage (path handling, process spawning, POSIX
+      # perms) must fail the release here, not at a customer.
+      - name: Run unit tests
+        run: mvn -B -ntp test
+
       - name: Build JAR
         run: |
           if [[ "${{ matrix.os }}" == macos* ]]; then
@@ -207,6 +213,28 @@ jobs:
           tar -czf "$FILE" -C app-staging .
           echo "ASSET=$FILE" >> $GITHUB_ENV
 
+      # The unit tests above ran on the runner's full JDK; clients get the
+      # stripped jlink runtime from this very tarball. Unpack the artifact and
+      # prove it works on ITS OWN runtime: launch both surfaces and verify
+      # every module jdeps demands is really bundled.
+      - name: Smoke-test artifact on its bundled runtime
+        run: |
+          mkdir smoke && tar -xzf "$ASSET" -C smoke
+          smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version
+          smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar help >/dev/null
+          PANDEV_B2C=1 HOME="$(mktemp -d)" smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version >/dev/null
+          REQ=$(jdeps --ignore-missing-deps --print-module-deps target/pandev-myapp.jar | tr ',' '\n')
+          HAVE=$(smoke/runtime/bin/java --list-modules | sed 's/@.*//')
+          MISSING=0
+          for m in $REQ; do
+            if ! echo "$HAVE" | grep -qx "$m"; then
+              echo "::error::Module $m required by the jar is missing from the bundled runtime"
+              MISSING=1
+            fi
+          done
+          [ "$MISSING" -eq 0 ] && echo "Runtime smoke OK: binary runs, all $(echo "$REQ" | wc -l | tr -d ' ') required modules bundled."
+          exit $MISSING
+
       - uses: actions/upload-artifact@v4
         with:
           name: prod-${{ matrix.os }}-${{ matrix.arch }}
@@ -239,6 +267,12 @@ jobs:
           java-version: 21
           cache: maven
 
+      # Same suite on a real Windows runner — this is where the
+      # JSON-escaped-paths class of bugs shows up (see PDM-4083).
+      - name: Run unit tests
+        shell: pwsh
+        run: mvn -B -ntp test
+
       - name: Build MSIX
         shell: pwsh
         run: |
@@ -247,6 +281,25 @@ jobs:
               -Pwindows-installer-msix `
               "-DpfxFile=$env:PFX_PATH" `
               "-DpfxPassword=$env:PFX_PASSWORD"
+
+      # Windows is the platform where the hand-maintained <addModules> list
+      # can silently diverge from what the jar needs (NoClassDefFoundError at
+      # a customer, see CLAUDE.md). Verify the jpackage app-image: launcher
+      # starts on the bundled runtime and every jdeps-required module is in.
+      - name: Smoke-test app-image on its bundled runtime
+        shell: pwsh
+        run: |
+          $img = 'target\installer\pandev'
+          & "$img\pandev.exe" --version
+          if ($LASTEXITCODE -ne 0) { Write-Error 'pandev.exe failed on the bundled runtime'; exit 1 }
+          $req = (& jdeps --ignore-missing-deps --print-module-deps target\pandev-myapp.jar).Trim() -split ','
+          $have = (& "$img\runtime\bin\java.exe" --list-modules) | ForEach-Object { ($_ -split '@')[0] }
+          $missing = @($req | Where-Object { $have -notcontains $_ })
+          if ($missing.Count -gt 0) {
+            Write-Error ("Modules missing from bundled runtime: " + ($missing -join ', '))
+            exit 1
+          }
+          Write-Host ("Runtime smoke OK: launcher runs, all " + $req.Count + " required modules bundled.")
 
       - name: Package zip
         shell: pwsh

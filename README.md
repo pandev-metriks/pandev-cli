@@ -29,7 +29,7 @@ npx pandev@beta
 <br>
 
 ```powershell
-iwr https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli-beta/main/install-experimental.ps1 -UseBasicParsing | iex
+iwr https://raw.githubusercontent.com/pandev-metriks/pandev-cli/main/install-experimental.ps1 -UseBasicParsing | iex
 ```
 
 The command it installs is `pandev cost`.

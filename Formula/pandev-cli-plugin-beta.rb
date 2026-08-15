@@ -11,7 +11,7 @@
 # Tokens replaced by CI (do NOT pre-fill):
 #   2.4.13           semantic version, e.g. 2.5.0
 #   v2.4.13-beta               release tag hosting the assets, e.g. v2.5.0-beta
-#   81d8f9af0269a0cd3df999c2402b9f35c208062fe9a3625875affe9090832cd4 / 5d734fdd98ccd537c67ecbee42ae067565b43337d74c45a4c6a78e8068e5dda1 / 0d346b7597e77a5303b3d0cbcd9378b4a700e9924a55e5656c52c87c1592c9d7  asset checksums
+#   c7b5e52c593f24daebc9a5c77843c90486618aad3919ecdd44e6958028746d0d / af5b1d5a66fa0450534362bbcae3e7cc1363281e96bc92592d9a07d6003d3c59 / 35ea49f79ac3c33503d067c8ee7804a25b62df1651dc398d40224d10d4d3b2fa  asset checksums
 class PandevCliPluginBeta < Formula
   desc "PanDev Metrics CLI (beta channel)"
   homepage "https://github.com/pandev-metriks/pandev-cli"
@@ -23,16 +23,16 @@ class PandevCliPluginBeta < Formula
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.4.13-beta/pandev-cli-plugin_2.4.13_macOS_amd64.tar.gz"
-      sha256 "81d8f9af0269a0cd3df999c2402b9f35c208062fe9a3625875affe9090832cd4"
+      sha256 "c7b5e52c593f24daebc9a5c77843c90486618aad3919ecdd44e6958028746d0d"
     else
       url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.4.13-beta/pandev-cli-plugin_2.4.13_macOS_arm64.tar.gz"
-      sha256 "5d734fdd98ccd537c67ecbee42ae067565b43337d74c45a4c6a78e8068e5dda1"
+      sha256 "af5b1d5a66fa0450534362bbcae3e7cc1363281e96bc92592d9a07d6003d3c59"
     end
   end
 
   on_linux do
     url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.4.13-beta/pandev-cli-plugin_2.4.13_Linux_amd64.tar.gz"
-    sha256 "0d346b7597e77a5303b3d0cbcd9378b4a700e9924a55e5656c52c87c1592c9d7"
+    sha256 "35ea49f79ac3c33503d067c8ee7804a25b62df1651dc398d40224d10d4d3b2fa"
   end
 
   conflicts_with "pandev-cli-plugin", because: "both install the `pandev` and `pandev-cli-plugin` binaries"

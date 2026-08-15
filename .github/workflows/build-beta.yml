@@ -112,8 +112,18 @@ jobs:
       # Full unit-test suite on THIS platform before anything is packaged —
       # platform-specific breakage (path handling, process spawning, POSIX
       # perms) must fail the release here, not at a customer.
+      # sqlite3 есть на ubuntu- и macOS-раннерах, поэтому тесты SQLite-воркеров
+      # (ZCode/opencode/Kilo) обязаны выполниться, а не быть тихо пропущенными:
+      # requireSqlite3 превращает skip в падение. Иначе «зелёный джоб» не
+      # отличается от «этот пласт вообще не проверяли».
       - name: Run unit tests
-        run: mvn -B -ntp test
+        run: mvn -B -ntp test -Dpandev.tests.requireSqlite3=true
+
+      # Что именно НЕ выполнилось на этой платформе — в лог и в summary джоба.
+      - name: Report skipped tests
+        if: always()
+        shell: bash
+        run: sh ci/smoke/report-skipped-tests.sh
 
       - name: Build JAR
         run: |
@@ -196,6 +206,13 @@ jobs:
           [ "$MISSING" -eq 0 ] && echo "Runtime smoke OK: binary runs, all $(echo "$REQ" | wc -l | tr -d ' ') required modules bundled."
           exit $MISSING
 
+      # Смоук выше доказывает, что бинарь запускается и рантайм укомплектован.
+      # Этот — что продукт СЧИТАЕТ: синтетический журнал с известным расходом
+      # прогоняется через cost --json и сверяется по числам. Ловит потерянный
+      # ридер, съехавший прайслист и падения на реальном пути исполнения.
+      - name: E2E — cost on a synthetic log
+        run: sh ci/smoke/e2e-cost.sh smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar
+
       - uses: actions/upload-artifact@v4
         with:
           name: beta-${{ matrix.os }}-${{ matrix.arch }}
@@ -239,9 +256,22 @@ jobs:
       # signtool on GitHub-hosted Windows runners.
       # Same suite on a real Windows runner — this is where the
       # JSON-escaped-paths class of bugs shows up (see PDM-4083).
+      # Windows-раннер не содержит sqlite3, из-за чего тесты SQLite-воркеров
+      # там пропускались ВСЕГДА: клетка «test Windows» была зелёной, ни разу
+      # не проверив ни ZCode, ни opencode, ни Kilo. Ставим тот же бинарь,
+      # который сборка бандлит в MSIX, и требуем его наличия.
+      - name: Provision sqlite3
+        shell: pwsh
+        run: ./ci/smoke/install-sqlite3-windows.ps1
+
       - name: Run unit tests
         shell: pwsh
-        run: mvn -B -ntp test
+        run: mvn -B -ntp test "-Dpandev.tests.requireSqlite3=true"
+
+      - name: Report skipped tests
+        if: always()
+        shell: bash
+        run: sh ci/smoke/report-skipped-tests.sh
 
       - name: Build MSIX
         shell: pwsh
@@ -274,6 +304,12 @@ jobs:
             exit 1
           }
           Write-Host ("Runtime smoke OK: launcher runs, all " + $req.Count + " required modules bundled.")
+
+      # Тот же сквозной расчёт, что на POSIX, но на app-image: у Windows своя
+      # сборка, свой список модулей в pom и своя раскладка путей.
+      - name: E2E — cost on a synthetic log
+        shell: pwsh
+        run: ./ci/smoke/e2e-cost.ps1 -Exe 'target\installer\pandev\pandev.exe'
 
       - name: Package zip
         shell: pwsh

@@ -474,3 +474,43 @@ jobs:
           fi
           git commit -m "Update to v${VERSION} (served from pandev-cli releases)"
           git push origin main
+
+  # ===========================================================================
+  # npm: prod release moves the public `latest` dist-tag, so plain
+  # `npx pandev` installs the stable version. If the version was already
+  # published by a beta run, repack skips publishing (npm versions are
+  # immutable) and only the dist-tag moves; a version that never went through
+  # beta is published here with --tag latest directly.
+  # ===========================================================================
+  npm-latest:
+    name: Publish npm latest (npx pandev)
+    needs: [version, build, build-windows, publish]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish (if unpublished) and move dist-tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          node release/npm/repack.mjs --version "$VERSION" --assets release-assets --tag latest
+          for p in pandev @pandev_metrics/cli-darwin-arm64 @pandev_metrics/cli-darwin-x64 @pandev_metrics/cli-linux-x64; do
+            npm dist-tag add "$p@$VERSION" latest
+          done

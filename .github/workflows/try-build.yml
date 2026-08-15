@@ -59,10 +59,10 @@ jobs:
       - name: Run tests
         run: mvn -B -ntp test "-Dpandev.tests.requireSqlite3=true"
 
-      - name: Report skipped tests
+      - name: Gate — no skipped tests
         if: always()
         shell: bash
-        run: sh ci/smoke/report-skipped-tests.sh
+        run: sh ci/smoke/assert-no-skipped-tests.sh
 
   package:
     name: Package (${{ matrix.os }} - ${{ matrix.profile }})

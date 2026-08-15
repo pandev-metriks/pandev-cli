@@ -53,8 +53,11 @@ jobs:
         shell: pwsh
         run: ./ci/smoke/install-sqlite3-windows.ps1
 
+      # Флаг в кавычках обязателен: на Windows шаг исполняется pwsh, который
+      # разбирает незакавыченный -Dpandev.tests.requireSqlite3=true на два
+      # аргумента, и maven получает фазу «.tests.requireSqlite3=true».
       - name: Run tests
-        run: mvn -B -ntp test -Dpandev.tests.requireSqlite3=true
+        run: mvn -B -ntp test "-Dpandev.tests.requireSqlite3=true"
 
       - name: Report skipped tests
         if: always()

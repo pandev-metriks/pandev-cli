@@ -2,6 +2,18 @@
 
 All notable changes to `pandev` are documented here. Dates are ISO, newest first.
 
+## 2.4.13 — 2026-08-15 (stable)
+
+- **First stable release of the npx channel.** `npx pandev` now installs this version —
+  no `@beta` tag needed. The beta channel keeps living at `npx pandev@beta`.
+- Login is token-only now: `pandev login` prompts for a PanDev token (password sign-in
+  was deprecated and has been removed). Already signed-in installs are unaffected.
+- Hardened install: symlinked install/log directories are followed and secured instead
+  of being refused; the Windows runtime carries the complete module set.
+- Every release is now built and unit-tested on all four platforms (macOS arm64/Intel,
+  Linux, Windows) and each artifact is smoke-tested on its own bundled runtime before
+  anything is published.
+
 ## 2.4.12 — 2026-08-15 (beta)
 
 - **Everything public now lives in this repository.** Releases (the binaries the installers

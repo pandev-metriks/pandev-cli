@@ -6,26 +6,25 @@
 
 Runs on your machine. No account, no telemetry — your logs never leave your laptop.
 
-[![npm](https://img.shields.io/npm/v/pandev/beta?label=beta&color=2ea44f)](https://www.npmjs.com/package/pandev)
+[![npm](https://img.shields.io/npm/v/pandev?label=npm&color=2ea44f)](https://www.npmjs.com/package/pandev)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-333)](#requirements)
 [![license](https://img.shields.io/badge/license-proprietary-333)](LICENSE)
 
 ```
-npx pandev@beta
+npx pandev
 ```
 
 **[pandev-metrics.com/cli](https://pandev-metrics.com/cli)** · **[npm](https://www.npmjs.com/package/pandev)** · [How to verify the privacy claim](docs/VERIFY.md) · [Changelog](CHANGELOG.md)
 
 </div>
 
-> [!IMPORTANT]
-> **Beta is live.** `npx pandev@beta` runs the current beta on macOS (Apple Silicon and Intel)
-> and Linux x64 — no install step, nothing else to set up. Beta means the numbers are already
-> trustworthy — the parsers are verified against live logs — but command names and output may
-> still change between releases.
+> [!TIP]
+> **Stable is live.** `npx pandev` runs the current release on macOS (Apple Silicon and Intel)
+> and Linux x64 — no install step, nothing else to set up. The parsers are verified against
+> live logs. Want the freshest features a bit earlier? `npx pandev@beta` tracks the beta channel.
 
 <details>
-<summary><b>Windows</b> — the npm package is not published yet; use the beta installer from PowerShell</summary>
+<summary><b>Windows</b> — the npm package is not published yet; use the installer from PowerShell</summary>
 <br>
 
 ```powershell
@@ -143,18 +142,18 @@ Two things worth knowing:
 
 | | |
 |---|---|
-| `npx pandev@beta` | summary for the last 14 days |
-| `npx pandev@beta today` | today only |
-| `npx pandev@beta task` | cost per task |
-| `npx pandev@beta task WEB-812` | one task: every prompt, time spent, files touched, tools used |
-| `npx pandev@beta files` | cost by file, with edit rounds |
-| `npx pandev@beta models` | cost and cache behaviour per model |
-| `npx pandev@beta why cache` | how prompt caching actually played out |
-| `npx pandev@beta why ratio` | context read per unit of output |
-| `npx pandev@beta web` | dashboard at `http://127.0.0.1:4976` + offline copy (alias: `dashboard`) |
-| `npx pandev@beta autostart on\|off` | dashboard at login — on or off with one command |
-| `npx pandev@beta team` | team plans: book a live [demo](https://pandev-metrics.com/book) |
-| `npx pandev@beta privacy` | what is read, and what leaves this machine |
+| `npx pandev` | summary for the last 14 days |
+| `npx pandev today` | today only |
+| `npx pandev task` | cost per task |
+| `npx pandev task WEB-812` | one task: every prompt, time spent, files touched, tools used |
+| `npx pandev files` | cost by file, with edit rounds |
+| `npx pandev models` | cost and cache behaviour per model |
+| `npx pandev why cache` | how prompt caching actually played out |
+| `npx pandev why ratio` | context read per unit of output |
+| `npx pandev web` | dashboard at `http://127.0.0.1:4976` + offline copy (alias: `dashboard`) |
+| `npx pandev autostart on\|off` | dashboard at login — on or off with one command |
+| `npx pandev team` | team plans: book a live [demo](https://pandev-metrics.com/book) |
+| `npx pandev privacy` | what is read, and what leaves this machine |
 
 Add `--json` to any command for machine-readable output, `--days N` to change the window,
 `--no-open` to serve the dashboard without touching your browser.
@@ -174,15 +173,15 @@ So, plainly:
 - **The dashboard server is loopback-only.** `pandev web` listens on `127.0.0.1:4976` and
   answers your own browser. It is not reachable from the network, and it sends nothing out.
 - **One anonymous version check — from your browser, not the binary.** The served dashboard
-  page asks `registry.npmjs.org` for the latest version number so it can tell you when the
-  beta moved on. No data goes with it, and the offline file copy never does even that.
+  page asks `registry.npmjs.org` for the latest version number so it can tell you when a
+  newer release is out. No data goes with it, and the offline file copy never does even that.
 - **The login item is opt-out and transparent.** The first interactive run enables the
   dashboard-at-login service and says so in plain text; `pandev autostart off` removes it
   completely. Pipes, `--json` and CI never trigger it.
 - **Nothing is written** except the dashboard file (`~/pandev-cost.html`, `0600`, owner-only)
   and — if autostart is on — the login item itself.
 
-`npx pandev@beta privacy` prints the full list of what is read and what is taken from it.
+`npx pandev privacy` prints the full list of what is read and what is taken from it.
 
 **And here is how to check that for yourself, without trusting us** — network activity is
 observable from outside the process, so the claim is verifiable even though this is not open
@@ -211,7 +210,7 @@ questions about *your* work.
 If the question turned into "how does this compare across the team", "which projects burn the
 most", or "what does AI actually cost us per delivered ticket" — that is
 [PanDev Metrics](https://pandev-metrics.com), and it is a different product.
-**[Book a live demo](https://pandev-metrics.com/book)** — or just run `npx pandev@beta team`.
+**[Book a live demo](https://pandev-metrics.com/book)** — or just run `npx pandev team`.
 
 ## License
 

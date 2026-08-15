@@ -2,6 +2,13 @@
 
 All notable changes to `pandev` are documented here. Dates are ISO, newest first.
 
+## 2.4.12 — 2026-08-15 (beta)
+
+- **Everything public now lives in this repository.** Releases (the binaries the installers
+  download), the Homebrew formulas (`Formula/`) and the install scripts are published here —
+  no more separate `homebrew-…` repos. Old installer URLs keep working via redirect stubs.
+- Task heat map: agent time is the default view, with the multiplier shown in the header.
+
 ## 2.4.4 — 2026-08-10 (beta)
 
 - **Live dashboard.** `pandev web` (alias `dashboard`) now serves your numbers at

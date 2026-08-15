@@ -18,7 +18,7 @@
 #    v2.5.0-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#      — checksum of the Windows .zip asset
+#    acd05d57afea5be8f7ff5993526f8d5aa442d255b4f13170b0638869ef0b50c3  — checksum of the Windows .zip asset
 #  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
 # =============================================================================
 set -e
@@ -47,7 +47,7 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256=""
+WINDOWS_AMD64_SHA256="acd05d57afea5be8f7ff5993526f8d5aa442d255b4f13170b0638869ef0b50c3"
 
 # -------------------------------------------------------
 # 1. Root check (skipped on Windows — Git Bash has no real "root")

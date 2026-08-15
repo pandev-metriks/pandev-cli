@@ -342,7 +342,7 @@ jobs:
       # сборка, свой список модулей в pom и своя раскладка путей.
       - name: E2E — cost on a synthetic log
         shell: pwsh
-        run: ./ci/smoke/e2e-cost.ps1 -Exe 'target\installer\pandev\pandev.exe'
+        run: ./ci/smoke/e2e-cost.ps1 'target\installer\pandev\pandev.exe'
 
       - name: Package zip
         shell: pwsh

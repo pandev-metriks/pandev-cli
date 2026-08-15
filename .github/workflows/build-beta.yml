@@ -120,10 +120,10 @@ jobs:
         run: mvn -B -ntp test -Dpandev.tests.requireSqlite3=true
 
       # Что именно НЕ выполнилось на этой платформе — в лог и в summary джоба.
-      - name: Report skipped tests
+      - name: Gate — no skipped tests
         if: always()
         shell: bash
-        run: sh ci/smoke/report-skipped-tests.sh
+        run: sh ci/smoke/assert-no-skipped-tests.sh
 
       - name: Build JAR
         run: |
@@ -268,10 +268,10 @@ jobs:
         shell: pwsh
         run: mvn -B -ntp test "-Dpandev.tests.requireSqlite3=true"
 
-      - name: Report skipped tests
+      - name: Gate — no skipped tests
         if: always()
         shell: bash
-        run: sh ci/smoke/report-skipped-tests.sh
+        run: sh ci/smoke/assert-no-skipped-tests.sh
 
       - name: Build MSIX
         shell: pwsh

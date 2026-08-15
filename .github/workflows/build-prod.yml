@@ -293,7 +293,11 @@ jobs:
           & "$img\pandev.exe" --version
           if ($LASTEXITCODE -ne 0) { Write-Error 'pandev.exe failed on the bundled runtime'; exit 1 }
           $req = (& jdeps --ignore-missing-deps --print-module-deps target\pandev-myapp.jar).Trim() -split ','
-          $have = (& "$img\runtime\bin\java.exe" --list-modules) | ForEach-Object { ($_ -split '@')[0] }
+          # The jpackage Windows runtime ships no java.exe (the launcher binds
+          # jvm.dll directly) — read the module list from the jlink `release`
+          # metadata file instead of executing the runtime.
+          $rel = Get-Content "$img\runtime\release" | Where-Object { $_ -match '^MODULES=' }
+          $have = ($rel -replace '^MODULES="', '' -replace '"$', '') -split '\s+'
           $missing = @($req | Where-Object { $have -notcontains $_ })
           if ($missing.Count -gt 0) {
             Write-Error ("Modules missing from bundled runtime: " + ($missing -join ', '))

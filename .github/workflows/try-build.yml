@@ -46,8 +46,20 @@ jobs:
           java-version: 21
           cache: maven
 
+      # Windows-раннер не содержит sqlite3, и без этого шага тесты
+      # SQLite-воркеров (ZCode/opencode/Kilo) там молча пропускаются.
+      - name: Provision sqlite3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./ci/smoke/install-sqlite3-windows.ps1
+
       - name: Run tests
-        run: mvn -B -ntp test
+        run: mvn -B -ntp test -Dpandev.tests.requireSqlite3=true
+
+      - name: Report skipped tests
+        if: always()
+        shell: bash
+        run: sh ci/smoke/report-skipped-tests.sh
 
   package:
     name: Package (${{ matrix.os }} - ${{ matrix.profile }})

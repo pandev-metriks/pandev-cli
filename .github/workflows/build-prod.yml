@@ -87,7 +87,10 @@ jobs:
           VERSION: ${{ steps.read.outputs.version }}
         run: |
           TAG="v${VERSION}"
-          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
+          # NB: the plural /git/refs/tags/X endpoint does PREFIX matching —
+          # v2.4.13 would match the v2.4.13-beta tag and block the release.
+          # The singular /git/ref/tags/X endpoint matches exactly (404 = free).
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
             echo "::error::Tag ${TAG} already exists in $GITHUB_REPOSITORY. Bump project.version in pom.xml before merging to prod."
             exit 1
           fi

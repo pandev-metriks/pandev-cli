@@ -95,3 +95,17 @@ jobs:
 
       - name: Package profile
         run: mvn -B -ntp -DskipTests package "-P${{ matrix.profile }}"
+
+      # Сквозная проверка на собранном jar: синтетический журнал с известным
+      # расходом → cost --json → сверка чисел. В релизных workflow тот же
+      # скрипт гоняется по артефакту с его jlink-рантаймом; здесь — по jar,
+      # чтобы сама приёмка проверялась на каждом try-build, а не только при
+      # выпуске.
+      - name: E2E — cost on a synthetic log
+        if: runner.os != 'Windows'
+        run: sh ci/smoke/e2e-cost.sh java -jar target/pandev-myapp.jar
+
+      - name: E2E — cost on a synthetic log
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./ci/smoke/e2e-cost.ps1 java -jar target/pandev-myapp.jar

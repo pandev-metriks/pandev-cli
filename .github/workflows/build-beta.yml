@@ -1,0 +1,409 @@
+# =============================================================================
+# Beta Release — runs in the PUBLIC repo pandev-metriks/pandev-cli.
+#
+# Trigger: repository_dispatch {event_type: beta-release} sent by GitLab CI on
+# every merge to the `test` branch (see .gitlab-ci.yml in the CLI source repo),
+# or a manual workflow_dispatch with a GitLab ref.
+#
+# The CLI source code lives in GitLab (git.pandev.io) and is cloned onto the
+# runner for the duration of the build only — it is never committed here.
+# Everything this workflow publishes lands in THIS repo:
+#   - GitHub Release v<version>-beta with the platform tarballs / Windows zip
+#   - Formula/pandev-cli-plugin-beta.rb (rendered from the source template)
+#   - install-experimental.sh / install-experimental.ps1
+# plus the npm beta channel (npx pandev@beta).
+#
+# Secrets:
+#   GITLAB_TOKEN — read_repository project access token for the source repo
+#   NPM_TOKEN    — npm automation token (classic; granular can't bypass 2FA)
+#
+# The run-name embeds the correlation_id passed by GitLab so the GitLab-side
+# acceptance job can find this exact run via the API.
+# =============================================================================
+name: Beta Release
+run-name: "Beta · ${{ github.event.client_payload.correlation_id || inputs.ref || 'manual' }}"
+
+on:
+  repository_dispatch:
+    types: [beta-release]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GitLab branch to build"
+        required: true
+        default: "test"
+
+# A newer beta supersedes an in-flight one — cancel it.
+concurrency:
+  group: beta-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  GITLAB_REPO: git.pandev.io/pandev/metrics/plugins/pandev-metrics-cli.git
+  SRC_REF: ${{ github.event.client_payload.ref || inputs.ref || 'test' }}
+  SRC_SHA: ${{ github.event.client_payload.sha || '' }}
+
+jobs:
+  version:
+    name: Read version from pom.xml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+          git log -1 --oneline
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Read project.version
+        id: read
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '[:space:]')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Failed to read project.version from pom.xml"
+            exit 1
+          fi
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Beta (${{ matrix.os }} - ${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-15-intel
+            arch: amd64
+          - os: ubuntu-latest
+            arch: amd64
+
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Build JAR
+        run: |
+          if [[ "${{ matrix.os }}" == macos* ]]; then
+            mvn -q -ntp clean package -DskipTests -Pmacos
+          else
+            mvn -q -ntp clean package -DskipTests -Plinux
+          fi
+
+      - name: Prepare Staging
+        run: |
+          mkdir -p app-staging/lib app-staging/bin app-staging/scripts
+          cp target/*.jar app-staging/lib/
+
+          if [[ "${{ matrix.os }}" == macos* ]]; then
+            unzip -j app-staging/lib/pandev-myapp.jar "scripts/macos/*" -d app-staging/scripts
+          else
+            unzip -j app-staging/lib/pandev-myapp.jar "scripts/linux/*" -d app-staging/scripts
+          fi
+          chmod +x app-staging/scripts/*.sh
+
+      # SYMLINK-SAFE LAUNCHER
+      - name: Create Launcher Scripts
+        run: |
+          cat > app-staging/bin/pandev << 'EOF'
+          #!/bin/bash
+          SOURCE="${BASH_SOURCE[0]}"
+          while [ -h "$SOURCE" ]; do
+            DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+            SOURCE="$(readlink "$SOURCE")"
+            [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+          done
+          SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+          APP_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+          exec "$APP_HOME/runtime/bin/java" -jar "$APP_HOME/lib/pandev-myapp.jar" "$@"
+          EOF
+
+          chmod +x app-staging/bin/pandev
+          cp app-staging/bin/pandev app-staging/bin/pandev-cli-plugin
+
+      - name: Create Runtime (jlink)
+        run: |
+          MODS=$(jdeps --ignore-missing-deps --print-module-deps target/*.jar)
+          MODS="$MODS,jdk.crypto.ec,java.net.http,java.logging,java.xml"
+
+          jlink --add-modules "$MODS" \
+            --no-man-pages \
+            --no-header-files \
+            --compress=zip-6 \
+            --output app-staging/runtime
+
+      - name: Create tar.gz
+        run: |
+          OS_NAME=$(echo "${{ matrix.os }}" | sed 's/ubuntu-latest/Linux/' | sed 's/macos-14/macOS/' | sed 's/macos-15-intel/macOS/')
+          FILE="pandev-cli-plugin_${VERSION}_${OS_NAME}_${{ matrix.arch }}.tar.gz"
+
+          tar -czf "$FILE" -C app-staging .
+          echo "ASSET=$FILE" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ env.ASSET }}
+
+  # ===========================================================================
+  # Windows MSIX build — kept as a separate job because the steps (jpackage +
+  # makeappx + signtool) share almost nothing with the macOS/Linux jlink/tar.gz
+  # path. Driven by the `windows-installer-msix` Maven profile, which already
+  # invokes build/windows-msix/build-windows-msix.ps1 internally.
+  #
+  # Signing uses the static test PFX checked into the source repo; see the
+  # comments in the source's build/windows-msix/ for the trust-model caveats.
+  # ===========================================================================
+  build-windows:
+    name: Build Beta (windows-latest - amd64)
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PFX_PATH: 'build/windows-msix/pandev-test-signing.pfx'
+      PFX_PASSWORD: 'pandev-test'
+
+    steps:
+      - name: Checkout source from GitLab
+        shell: bash
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      # Sign straight from the PFX via signtool /f /p — no cert store import;
+      # store-resident certs aren't reliably visible to the Maven-spawned
+      # signtool on GitHub-hosted Windows runners.
+      - name: Build MSIX
+        shell: pwsh
+        run: |
+          mvn -q -ntp clean package `
+              -DskipTests `
+              -Pwindows-installer-msix `
+              "-DpfxFile=$env:PFX_PATH" `
+              "-DpfxPassword=$env:PFX_PASSWORD"
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'No MSIX produced by maven build.' }
+          $helper = 'target\installer-msix\install-pandev.ps1'
+          if (-not (Test-Path $helper)) { throw 'install-pandev.ps1 missing alongside MSIX.' }
+
+          $zipName = "pandev-cli-plugin_${env:VERSION}_Windows_amd64.zip"
+          $zipDir = 'win-staging'
+          New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+          Copy-Item -Path $msix.FullName -Destination $zipDir
+          Copy-Item -Path $helper -Destination $zipDir
+
+          Compress-Archive -Path "$zipDir\*" -DestinationPath $zipName -Force
+          Write-Host "Built $zipName ($(Get-Item $zipName | Select-Object -ExpandProperty Length) bytes)"
+          "ASSET=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-windows-latest-amd64
+          path: ${{ env.ASSET }}
+
+  publish:
+    name: Publish Beta Release
+    needs: [version, build, build-windows]
+    # Windows may fail without withholding macOS/Linux artifacts from users —
+    # same contract the beta channel has always had.
+    if: always() && needs.version.result == 'success' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: v${{ needs.version.outputs.version }}-beta
+    steps:
+      # Source checkout — for the formula/installer templates in release/.
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" src
+          if [ -n "$SRC_SHA" ]; then git -C src checkout --quiet "$SRC_SHA"; fi
+
+      # This repo's main — the rendered formula and installers land here.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: showcase
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Compute SHA256 for each asset
+        id: sha
+        run: |
+          cd release-assets
+          ls -la
+          # macOS/Linux are mandatory — fail loudly if any is missing.
+          MACOS_AMD64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_macOS_amd64.tar.gz" | awk '{print $1}')
+          MACOS_ARM64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_macOS_arm64.tar.gz" | awk '{print $1}')
+          LINUX_AMD64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_Linux_amd64.tar.gz" | awk '{print $1}')
+          # Windows is optional in beta.
+          WINDOWS_ZIP="pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
+          if [ -f "$WINDOWS_ZIP" ]; then
+              WINDOWS_AMD64_SHA=$(sha256sum "$WINDOWS_ZIP" | awk '{print $1}')
+          else
+              WINDOWS_AMD64_SHA=""
+              echo "::warning::Windows zip not found (build-windows likely failed). Publishing macOS/Linux only."
+          fi
+          echo "macos_amd64=$MACOS_AMD64_SHA" >> "$GITHUB_OUTPUT"
+          echo "macos_arm64=$MACOS_ARM64_SHA" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$LINUX_AMD64_SHA" >> "$GITHUB_OUTPUT"
+          echo "windows_amd64=$WINDOWS_AMD64_SHA" >> "$GITHUB_OUTPUT"
+
+      # Beta tags are recreated in place — drop the previous release + tag.
+      - name: Reset existing release and tag (if any)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
+
+      - name: Create Beta Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Beta ${{ env.VERSION }}
+          body: |
+            Beta release
+
+            Version: ${{ env.VERSION }}
+            Source: git.pandev.io ${{ env.SRC_REF }} @ ${{ env.SRC_SHA || 'HEAD' }}
+          files: |
+            release-assets/pandev-cli-plugin_*.tar.gz
+            release-assets/pandev-cli-plugin_*.zip
+          draft: false
+          prerelease: true
+
+      - name: Render beta formula and installers
+        env:
+          MACOS_AMD64_SHA: ${{ steps.sha.outputs.macos_amd64 }}
+          MACOS_ARM64_SHA: ${{ steps.sha.outputs.macos_arm64 }}
+          LINUX_AMD64_SHA: ${{ steps.sha.outputs.linux_amd64 }}
+          WINDOWS_AMD64_SHA: ${{ steps.sha.outputs.windows_amd64 }}
+        run: |
+          python3 - "$VERSION" "$TAG" <<'PY'
+          import os, pathlib, sys
+          version, tag = sys.argv[1:]
+          tokens = {
+              '@VERSION@': version,
+              '@TAG@': tag,
+              '@CHANNEL@': 'Beta',
+              '@FORMULA@': 'pandev-cli-plugin-beta',
+              '@REPO@': 'pandev-metriks/pandev-cli',
+              '@MACOS_AMD64_SHA@': os.environ['MACOS_AMD64_SHA'],
+              '@MACOS_ARM64_SHA@': os.environ['MACOS_ARM64_SHA'],
+              '@LINUX_AMD64_SHA@': os.environ['LINUX_AMD64_SHA'],
+              '@WINDOWS_AMD64_SHA256@': os.environ['WINDOWS_AMD64_SHA'],
+          }
+          pairs = [
+              ('src/release/formula/pandev-cli-plugin-beta.rb', 'showcase/Formula/pandev-cli-plugin-beta.rb'),
+              ('src/release/install-experimental.sh',           'showcase/install-experimental.sh'),
+              ('src/release/install-experimental.ps1',          'showcase/install-experimental.ps1'),
+          ]
+          # Two-phase render: read everything first, then write, so a missing
+          # source file can't leave the showcase half-updated.
+          rendered = []
+          for src, dst in pairs:
+              text = pathlib.Path(src).read_text(encoding='utf-8')
+              for k, v in tokens.items():
+                  text = text.replace(k, v)
+              rendered.append((dst, text))
+          for dst, text in rendered:
+              pathlib.Path(dst).parent.mkdir(parents=True, exist_ok=True)
+              pathlib.Path(dst).write_text(text, encoding='utf-8')
+              print(f"rendered -> {dst}")
+          PY
+          chmod +x showcase/install-experimental.sh
+          (cd showcase && git --no-pager diff --stat)
+
+      - name: Commit and push to main
+        working-directory: showcase
+        run: |
+          git config user.name "PanDev Ltd"
+          git config user.email "admin@pandev.io"
+          git add Formula/pandev-cli-plugin-beta.rb install-experimental.sh install-experimental.ps1
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Beta v${VERSION}"
+          git push origin main
+
+  # ===========================================================================
+  # npm channel: the same tarballs repacked into npm packages (esbuild scheme:
+  # platform packages + thin `pandev` launcher), published under dist-tag beta.
+  # npm versions are immutable; repack.mjs skips already-published versions, so
+  # the job stays green when pom.xml wasn't bumped (no publish happens).
+  # ===========================================================================
+  npm-beta:
+    name: Publish npm beta (npx pandev@beta)
+    needs: [version, build, publish]
+    if: always() && needs.build.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Repack tarballs into npm packages and publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node release/npm/repack.mjs --version "$VERSION" --assets release-assets --tag beta

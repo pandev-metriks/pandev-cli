@@ -1,0 +1,419 @@
+# =============================================================================
+# Production Release — runs in the PUBLIC repo pandev-metriks/pandev-cli.
+#
+# Trigger: repository_dispatch {event_type: prod-release} sent by GitLab CI on
+# every merge to the `prod` branch, or a manual workflow_dispatch.
+#
+# Publishes into THIS repo: GitHub Release v<version> (immutable), rendered
+# Formula/pandev-cli-plugin.rb, install.sh, install.ps1.
+#
+# TRANSITION (until the legacy tap is archived): the same rendered stable
+# formula is also pushed to pandev-metriks/homebrew-pandev-cli, so existing
+# brew clients keep receiving updates through the tap they already have. The
+# formula's download URLs point at THIS repo's release — brew doesn't care
+# which repo hosts the binaries. Remove the "legacy tap" steps and the
+# TAP_PUSH_TOKEN secret once telemetry shows no live installs on the old tap.
+#
+# Secrets:
+#   GITLAB_TOKEN   — read_repository project access token for the source repo
+#   NPM_TOKEN      — (not used here yet; prod npm channel is off)
+#   TAP_PUSH_TOKEN — write token for the legacy tap (transition only)
+# =============================================================================
+name: Production Release
+run-name: "Prod · ${{ github.event.client_payload.correlation_id || inputs.ref || 'manual' }}"
+
+on:
+  repository_dispatch:
+    types: [prod-release]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GitLab branch to build"
+        required: true
+        default: "prod"
+
+# Serialize prod releases. A queued second release then fails at the tag
+# check — the intended behavior when pom.xml wasn't bumped.
+concurrency:
+  group: prod-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GITLAB_REPO: git.pandev.io/pandev/metrics/plugins/pandev-metrics-cli.git
+  LEGACY_TAP: pandev-metriks/homebrew-pandev-cli
+  SRC_REF: ${{ github.event.client_payload.ref || inputs.ref || 'prod' }}
+  SRC_SHA: ${{ github.event.client_payload.sha || '' }}
+
+jobs:
+  version:
+    name: Read version and verify tag is free
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+          git log -1 --oneline
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Read project.version
+        id: read
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '[:space:]')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Failed to read project.version from pom.xml"
+            exit 1
+          fi
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Prod releases must never overwrite an existing version. If the tag is
+      # already present, fail early so the developer bumps pom.xml first.
+      - name: Verify tag does not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.read.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists in $GITHUB_REPOSITORY. Bump project.version in pom.xml before merging to prod."
+            exit 1
+          fi
+          echo "Tag ${TAG} is free. OK to proceed."
+
+      # TRANSITION pre-flight: make sure the legacy tap is still writable
+      # BEFORE building. Publishing an immutable release and then failing the
+      # legacy-tap push would leave old brew clients on a stale formula with
+      # no way to re-release the same version.
+      - name: Pre-flight legacy tap (transition)
+        uses: actions/checkout@v4
+        with:
+          repository: pandev-metriks/homebrew-pandev-cli
+          ref: main
+          token: ${{ secrets.TAP_PUSH_TOKEN }}
+          path: legacy-tap-preflight
+
+      - name: Assert legacy tap is writable
+        working-directory: legacy-tap-preflight
+        run: |
+          test -f Formula/pandev-cli-plugin.rb || {
+            echo "::error::Formula/pandev-cli-plugin.rb is missing in $LEGACY_TAP."
+            exit 1
+          }
+          # Non-destructive write probe: a read-only token fails the
+          # git-receive-pack handshake here, before anything ships.
+          git push --dry-run origin HEAD:main
+          echo "Legacy tap OK: formula present and TAP_PUSH_TOKEN can push."
+
+  build:
+    name: Build Prod (${{ matrix.os }} - ${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-15-intel
+            arch: amd64
+          - os: ubuntu-latest
+            arch: amd64
+
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Build JAR
+        run: |
+          if [[ "${{ matrix.os }}" == macos* ]]; then
+            mvn -q -ntp clean package -DskipTests -Pmacos
+          else
+            mvn -q -ntp clean package -DskipTests -Plinux
+          fi
+
+      - name: Prepare Staging
+        run: |
+          mkdir -p app-staging/lib app-staging/bin app-staging/scripts
+          cp target/*.jar app-staging/lib/
+
+          if [[ "${{ matrix.os }}" == macos* ]]; then
+            unzip -j app-staging/lib/pandev-myapp.jar "scripts/macos/*" -d app-staging/scripts
+          else
+            unzip -j app-staging/lib/pandev-myapp.jar "scripts/linux/*" -d app-staging/scripts
+          fi
+          chmod +x app-staging/scripts/*.sh
+
+      # SYMLINK-SAFE LAUNCHER
+      - name: Create Launcher Scripts
+        run: |
+          cat > app-staging/bin/pandev << 'EOF'
+          #!/bin/bash
+          SOURCE="${BASH_SOURCE[0]}"
+          while [ -h "$SOURCE" ]; do
+            DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+            SOURCE="$(readlink "$SOURCE")"
+            [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+          done
+          SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+          APP_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+          exec "$APP_HOME/runtime/bin/java" -jar "$APP_HOME/lib/pandev-myapp.jar" "$@"
+          EOF
+
+          chmod +x app-staging/bin/pandev
+          cp app-staging/bin/pandev app-staging/bin/pandev-cli-plugin
+
+      - name: Create Runtime (jlink)
+        run: |
+          MODS=$(jdeps --ignore-missing-deps --print-module-deps target/*.jar)
+          MODS="$MODS,jdk.crypto.ec,java.net.http,java.logging,java.xml"
+
+          jlink --add-modules "$MODS" \
+            --no-man-pages \
+            --no-header-files \
+            --compress=zip-6 \
+            --output app-staging/runtime
+
+      - name: Create tar.gz
+        run: |
+          OS_NAME=$(echo "${{ matrix.os }}" | sed 's/ubuntu-latest/Linux/' | sed 's/macos-14/macOS/' | sed 's/macos-15-intel/macOS/')
+          FILE="pandev-cli-plugin_${VERSION}_${OS_NAME}_${{ matrix.arch }}.tar.gz"
+
+          tar -czf "$FILE" -C app-staging .
+          echo "ASSET=$FILE" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prod-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ env.ASSET }}
+
+  # Windows is MANDATORY in prod: publish lists this job in `needs` with no
+  # escape hatch. Prod tags are immutable — better to publish nothing than a
+  # stable version that permanently lacks the Windows installer.
+  build-windows:
+    name: Build Prod (windows-latest - amd64)
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PFX_PATH: 'build/windows-msix/pandev-test-signing.pfx'
+      PFX_PASSWORD: 'pandev-test'
+
+    steps:
+      - name: Checkout source from GitLab
+        shell: bash
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Build MSIX
+        shell: pwsh
+        run: |
+          mvn -q -ntp clean package `
+              -DskipTests `
+              -Pwindows-installer-msix `
+              "-DpfxFile=$env:PFX_PATH" `
+              "-DpfxPassword=$env:PFX_PASSWORD"
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'No MSIX produced by maven build.' }
+          $helper = 'target\installer-msix\install-pandev.ps1'
+          if (-not (Test-Path $helper)) { throw 'install-pandev.ps1 missing alongside MSIX.' }
+
+          $zipName = "pandev-cli-plugin_${env:VERSION}_Windows_amd64.zip"
+          $zipDir = 'win-staging'
+          New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+          Copy-Item -Path $msix.FullName -Destination $zipDir
+          Copy-Item -Path $helper -Destination $zipDir
+
+          Compress-Archive -Path "$zipDir\*" -DestinationPath $zipName -Force
+          Write-Host "Built $zipName ($(Get-Item $zipName | Select-Object -ExpandProperty Length) bytes)"
+          "ASSET=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prod-windows-latest-amd64
+          path: ${{ env.ASSET }}
+
+  publish:
+    name: Publish Production Release
+    needs: [version, build, build-windows]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: v${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" src
+          if [ -n "$SRC_SHA" ]; then git -C src checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: showcase
+
+      # TRANSITION: legacy tap checkout — receives the same rendered formula.
+      - uses: actions/checkout@v4
+        with:
+          repository: pandev-metriks/homebrew-pandev-cli
+          ref: main
+          token: ${{ secrets.TAP_PUSH_TOKEN }}
+          path: legacy-tap
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Compute SHA256 for each asset
+        id: sha
+        run: |
+          cd release-assets
+          ls -la
+          MACOS_AMD64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_macOS_amd64.tar.gz" | awk '{print $1}')
+          MACOS_ARM64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_macOS_arm64.tar.gz" | awk '{print $1}')
+          LINUX_AMD64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_Linux_amd64.tar.gz" | awk '{print $1}')
+          WINDOWS_ZIP="pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
+          if [ ! -f "$WINDOWS_ZIP" ]; then
+            echo "::error::$WINDOWS_ZIP missing from release-assets despite build-windows success."
+            exit 1
+          fi
+          WINDOWS_AMD64_SHA=$(sha256sum "$WINDOWS_ZIP" | awk '{print $1}')
+          echo "macos_amd64=$MACOS_AMD64_SHA" >> "$GITHUB_OUTPUT"
+          echo "macos_arm64=$MACOS_ARM64_SHA" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$LINUX_AMD64_SHA" >> "$GITHUB_OUTPUT"
+          echo "windows_amd64=$WINDOWS_AMD64_SHA" >> "$GITHUB_OUTPUT"
+
+      # NOTE: no "delete tag if exists" here — prod tags are immutable. The
+      # version job already verified the tag is free, and the concurrency
+      # group serializes runs.
+      - name: Create Production Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.VERSION }}
+          body: |
+            Production release
+
+            Version: ${{ env.VERSION }}
+            Source: git.pandev.io ${{ env.SRC_REF }} @ ${{ env.SRC_SHA || 'HEAD' }}
+          files: |
+            release-assets/pandev-cli-plugin_*.tar.gz
+            release-assets/pandev-cli-plugin_*.zip
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+
+      - name: Render stable formula and installers
+        env:
+          MACOS_AMD64_SHA: ${{ steps.sha.outputs.macos_amd64 }}
+          MACOS_ARM64_SHA: ${{ steps.sha.outputs.macos_arm64 }}
+          LINUX_AMD64_SHA: ${{ steps.sha.outputs.linux_amd64 }}
+          WINDOWS_AMD64_SHA: ${{ steps.sha.outputs.windows_amd64 }}
+        run: |
+          python3 - "$VERSION" "$TAG" <<'PY'
+          import os, pathlib, sys
+          version, tag = sys.argv[1:]
+          tokens = {
+              '@VERSION@': version,
+              '@TAG@': tag,
+              '@CHANNEL@': 'Stable',
+              '@FORMULA@': 'pandev-cli-plugin',
+              '@REPO@': 'pandev-metriks/pandev-cli',
+              '@MACOS_AMD64_SHA@': os.environ['MACOS_AMD64_SHA'],
+              '@MACOS_ARM64_SHA@': os.environ['MACOS_ARM64_SHA'],
+              '@LINUX_AMD64_SHA@': os.environ['LINUX_AMD64_SHA'],
+              '@WINDOWS_AMD64_SHA256@': os.environ['WINDOWS_AMD64_SHA'],
+          }
+          pairs = [
+              ('src/release/formula/pandev-cli-plugin.rb', 'showcase/Formula/pandev-cli-plugin.rb'),
+              ('src/release/install-experimental.sh',      'showcase/install.sh'),
+              ('src/release/install-experimental.ps1',     'showcase/install.ps1'),
+          ]
+          rendered = []
+          for src, dst in pairs:
+              text = pathlib.Path(src).read_text(encoding='utf-8')
+              for k, v in tokens.items():
+                  text = text.replace(k, v)
+              rendered.append((dst, text))
+          for dst, text in rendered:
+              pathlib.Path(dst).parent.mkdir(parents=True, exist_ok=True)
+              pathlib.Path(dst).write_text(text, encoding='utf-8')
+              print(f"rendered -> {dst}")
+          # TRANSITION: the exact same stable formula goes to the legacy tap,
+          # so existing brew clients keep updating. Same class name
+          # (PandevCliPlugin), same file name — only the hosting repo differs,
+          # and the URLs inside already point at pandev-cli releases.
+          legacy = pathlib.Path('showcase/Formula/pandev-cli-plugin.rb').read_text(encoding='utf-8')
+          pathlib.Path('legacy-tap/Formula/pandev-cli-plugin.rb').write_text(legacy, encoding='utf-8')
+          print("rendered -> legacy-tap/Formula/pandev-cli-plugin.rb")
+          PY
+          chmod +x showcase/install.sh
+          (cd showcase && git --no-pager diff --stat)
+          (cd legacy-tap && git --no-pager diff --stat)
+
+      - name: Commit and push showcase main
+        working-directory: showcase
+        run: |
+          git config user.name "PanDev Ltd"
+          git config user.email "admin@pandev.io"
+          git add Formula/pandev-cli-plugin.rb install.sh install.ps1
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Release v${VERSION}"
+          git push origin main
+
+      # TRANSITION: keep existing brew clients updating through their old tap.
+      - name: Commit and push legacy tap (transition)
+        working-directory: legacy-tap
+        run: |
+          git config user.name "PanDev Ltd"
+          git config user.email "admin@pandev.io"
+          git add Formula/pandev-cli-plugin.rb
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update to v${VERSION} (served from pandev-cli releases)"
+          git push origin main

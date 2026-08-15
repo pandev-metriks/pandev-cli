@@ -1,0 +1,77 @@
+# =============================================================================
+# Try Build — manual full-matrix build check, publishes nothing.
+#
+# Runs in pandev-metriks/pandev-cli. Use it to verify that an arbitrary GitLab
+# branch builds on every platform before merging it anywhere — the successor
+# of the old PR Check (unit tests themselves now run in GitLab CI on MRs).
+# =============================================================================
+name: Try Build
+run-name: "Try · ${{ inputs.ref }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GitLab branch to build"
+        required: true
+        default: "dev"
+
+permissions:
+  contents: read
+
+env:
+  GITLAB_REPO: git.pandev.io/pandev/metrics/plugins/pandev-metrics-cli.git
+  SRC_REF: ${{ inputs.ref }}
+
+jobs:
+  tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          git log -1 --oneline
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Run tests
+        run: mvn -B -ntp test
+
+  package:
+    name: Package (${{ matrix.os }} - ${{ matrix.profile }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            profile: linux
+          - os: macos-14
+            profile: macos
+          - os: macos-15-intel
+            profile: macos
+          - os: windows-latest
+            profile: windows
+    steps:
+      - name: Checkout source from GitLab
+        shell: bash
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Package profile
+        run: mvn -B -ntp -DskipTests package "-P${{ matrix.profile }}"

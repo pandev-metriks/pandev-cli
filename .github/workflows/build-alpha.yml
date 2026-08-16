@@ -306,6 +306,31 @@ jobs:
         run: |
           $img = 'target\installer\pandev'
           if (-not (Test-Path "$img\pandev.exe")) { throw 'app-image not found at ' + $img }
+
+          # sqlite3.exe обязан ехать внутри пакета. Windows его не поставляет, а
+          # базы ZCode и opencode читаются через него: без него единственный
+          # источник данных отключается молча и продукт выглядит сломанным.
+          # MSIX-сборка уже скачала его в свой staging — переиспользуем тот же
+          # файл, а если его там нет, тянем с sqlite.org.
+          $sq = Get-ChildItem -Path 'target' -Filter 'sqlite3.exe' -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+          if ($sq) {
+            Copy-Item $sq.FullName -Destination "$img\sqlite3.exe" -Force
+            Write-Host "sqlite3.exe taken from $($sq.FullName)"
+          } else {
+            $ver = '3500400'; $year = '2026'
+            $url = "https://www.sqlite.org/$year/sqlite-tools-win-x64-$ver.zip"
+            $tmp = Join-Path $env:RUNNER_TEMP 'sqlite-tools.zip'
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+            Expand-Archive -Path $tmp -DestinationPath (Join-Path $env:RUNNER_TEMP 'sqlite') -Force
+            $dl = Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'sqlite') -Filter 'sqlite3.exe' -Recurse |
+                  Select-Object -First 1
+            if (-not $dl) { throw 'sqlite3.exe not found in sqlite-tools zip' }
+            Copy-Item $dl.FullName -Destination "$img\sqlite3.exe" -Force
+            Write-Host "sqlite3.exe downloaded from $url"
+          }
+          if (-not (Test-Path "$img\sqlite3.exe")) { throw 'sqlite3.exe missing from app-image' }
+
           $zipName = "pandev-cli-plugin_${env:VERSION}_Windows_amd64_portable.zip"
           Compress-Archive -Path "$img\*" -DestinationPath $zipName -Force
           Write-Host "Built $zipName ($((Get-Item $zipName).Length) bytes)"

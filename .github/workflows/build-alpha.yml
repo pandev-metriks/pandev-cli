@@ -1,0 +1,430 @@
+# =============================================================================
+# Beta Release — runs in the PUBLIC repo pandev-metriks/pandev-cli.
+#
+# Trigger: repository_dispatch {event_type: alpha-release} sent by GitLab CI on
+# every merge to the `test` branch (see .gitlab-ci.yml in the CLI source repo),
+# or a manual workflow_dispatch with a GitLab ref.
+#
+# The CLI source code lives in GitLab (git.pandev.io) and is cloned onto the
+# runner for the duration of the build only — it is never committed here.
+# Everything this workflow publishes lands in THIS repo:
+#   - GitHub Release v<version>-alpha with the platform tarballs / Windows zip
+#   - install-experimental.sh / install-experimental.ps1
+# plus the npm alpha channel (npx pandev@alpha). Brew and installers are NOT
+# touched: alpha is an npm-only channel for trying a feature before beta.
+#
+# Secrets:
+#   GITLAB_TOKEN — read_repository project access token for the source repo
+#   NPM_TOKEN    — npm automation token (classic; granular can't bypass 2FA)
+#
+# The run-name embeds the correlation_id passed by GitLab so the GitLab-side
+# acceptance job can find this exact run via the API.
+# =============================================================================
+name: Alpha Release
+run-name: "Beta · ${{ github.event.client_payload.correlation_id || inputs.ref || 'manual' }}"
+
+on:
+  repository_dispatch:
+    types: [alpha-release]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GitLab branch to build"
+        required: true
+        default: "test"
+
+# A newer alpha supersedes an in-flight one — cancel it.
+concurrency:
+  group: alpha-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  GITLAB_REPO: git.pandev.io/pandev/metrics/plugins/pandev-metrics-cli.git
+  SRC_REF: ${{ github.event.client_payload.ref || inputs.ref || 'test' }}
+  SRC_SHA: ${{ github.event.client_payload.sha || '' }}
+
+jobs:
+  version:
+    name: Read version from pom.xml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+          git log -1 --oneline
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Read project.version
+        id: read
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '[:space:]')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Failed to read project.version from pom.xml"
+            exit 1
+          fi
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Alpha (${{ matrix.os }} - ${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-15-intel
+            arch: amd64
+          - os: ubuntu-latest
+            arch: amd64
+
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      # Full unit-test suite on THIS platform before anything is packaged —
+      # platform-specific breakage (path handling, process spawning, POSIX
+      # perms) must fail the release here, not at a customer.
+      - name: Run unit tests
+        run: mvn -B -ntp test
+
+      - name: Build JAR
+        run: |
+          if [[ "${{ matrix.os }}" == macos* ]]; then
+            mvn -q -ntp clean package -DskipTests -Pmacos
+          else
+            mvn -q -ntp clean package -DskipTests -Plinux
+          fi
+
+      - name: Prepare Staging
+        run: |
+          mkdir -p app-staging/lib app-staging/bin app-staging/scripts
+          cp target/*.jar app-staging/lib/
+
+          if [[ "${{ matrix.os }}" == macos* ]]; then
+            unzip -j app-staging/lib/pandev-myapp.jar "scripts/macos/*" -d app-staging/scripts
+          else
+            unzip -j app-staging/lib/pandev-myapp.jar "scripts/linux/*" -d app-staging/scripts
+          fi
+          chmod +x app-staging/scripts/*.sh
+
+      # SYMLINK-SAFE LAUNCHER
+      - name: Create Launcher Scripts
+        run: |
+          cat > app-staging/bin/pandev << 'EOF'
+          #!/bin/bash
+          SOURCE="${BASH_SOURCE[0]}"
+          while [ -h "$SOURCE" ]; do
+            DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+            SOURCE="$(readlink "$SOURCE")"
+            [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+          done
+          SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+          APP_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+          exec "$APP_HOME/runtime/bin/java" -jar "$APP_HOME/lib/pandev-myapp.jar" "$@"
+          EOF
+
+          chmod +x app-staging/bin/pandev
+          cp app-staging/bin/pandev app-staging/bin/pandev-cli-plugin
+
+      - name: Create Runtime (jlink)
+        run: |
+          MODS=$(jdeps --ignore-missing-deps --print-module-deps target/*.jar)
+          MODS="$MODS,jdk.crypto.ec,java.net.http,java.logging,java.xml"
+
+          jlink --add-modules "$MODS" \
+            --no-man-pages \
+            --no-header-files \
+            --compress=zip-6 \
+            --output app-staging/runtime
+
+      - name: Create tar.gz
+        run: |
+          OS_NAME=$(echo "${{ matrix.os }}" | sed 's/ubuntu-latest/Linux/' | sed 's/macos-14/macOS/' | sed 's/macos-15-intel/macOS/')
+          FILE="pandev-cli-plugin_${VERSION}_${OS_NAME}_${{ matrix.arch }}.tar.gz"
+
+          tar -czf "$FILE" -C app-staging .
+          echo "ASSET=$FILE" >> $GITHUB_ENV
+
+      # The unit tests above ran on the runner's full JDK; clients get the
+      # stripped jlink runtime from this very tarball. Unpack the artifact and
+      # prove it works on ITS OWN runtime: launch both surfaces and verify
+      # every module jdeps demands is really bundled.
+      - name: Smoke-test artifact on its bundled runtime
+        run: |
+          mkdir smoke && tar -xzf "$ASSET" -C smoke
+          smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version
+          smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar help >/dev/null
+          PANDEV_B2C=1 HOME="$(mktemp -d)" smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version >/dev/null
+          REQ=$(jdeps --ignore-missing-deps --print-module-deps target/pandev-myapp.jar | tr ',' '\n')
+          HAVE=$(smoke/runtime/bin/java --list-modules | sed 's/@.*//')
+          MISSING=0
+          for m in $REQ; do
+            if ! echo "$HAVE" | grep -qx "$m"; then
+              echo "::error::Module $m required by the jar is missing from the bundled runtime"
+              MISSING=1
+            fi
+          done
+          [ "$MISSING" -eq 0 ] && echo "Runtime smoke OK: binary runs, all $(echo "$REQ" | wc -l | tr -d ' ') required modules bundled."
+          exit $MISSING
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ env.ASSET }}
+
+  # ===========================================================================
+  # Windows MSIX build — kept as a separate job because the steps (jpackage +
+  # makeappx + signtool) share almost nothing with the macOS/Linux jlink/tar.gz
+  # path. Driven by the `windows-installer-msix` Maven profile, which already
+  # invokes build/windows-msix/build-windows-msix.ps1 internally.
+  #
+  # Signing uses the static test PFX checked into the source repo; see the
+  # comments in the source's build/windows-msix/ for the trust-model caveats.
+  # ===========================================================================
+  build-windows:
+    name: Build Alpha (windows-latest - amd64)
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PFX_PATH: 'build/windows-msix/pandev-test-signing.pfx'
+      PFX_PASSWORD: 'pandev-test'
+
+    steps:
+      - name: Checkout source from GitLab
+        shell: bash
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      # Sign straight from the PFX via signtool /f /p — no cert store import;
+      # store-resident certs aren't reliably visible to the Maven-spawned
+      # signtool on GitHub-hosted Windows runners.
+      # Same suite on a real Windows runner — this is where the
+      # JSON-escaped-paths class of bugs shows up (see PDM-4083).
+      - name: Run unit tests
+        shell: pwsh
+        run: mvn -B -ntp test
+
+      - name: Build MSIX
+        shell: pwsh
+        run: |
+          mvn -q -ntp clean package `
+              -DskipTests `
+              -Pwindows-installer-msix `
+              "-DpfxFile=$env:PFX_PATH" `
+              "-DpfxPassword=$env:PFX_PASSWORD"
+
+      # Windows is the platform where the hand-maintained <addModules> list
+      # can silently diverge from what the jar needs (NoClassDefFoundError at
+      # a customer, see CLAUDE.md). Verify the jpackage app-image: launcher
+      # starts on the bundled runtime and every jdeps-required module is in.
+      - name: Smoke-test app-image on its bundled runtime
+        shell: pwsh
+        run: |
+          $img = 'target\installer\pandev'
+          & "$img\pandev.exe" --version
+          if ($LASTEXITCODE -ne 0) { Write-Error 'pandev.exe failed on the bundled runtime'; exit 1 }
+          $req = (& jdeps --ignore-missing-deps --print-module-deps target\pandev-myapp.jar).Trim() -split ','
+          # The jpackage Windows runtime ships no java.exe (the launcher binds
+          # jvm.dll directly) — read the module list from the jlink `release`
+          # metadata file instead of executing the runtime.
+          $rel = Get-Content "$img\runtime\release" | Where-Object { $_ -match '^MODULES=' }
+          $have = ($rel -replace '^MODULES="', '' -replace '"$', '') -split '\s+'
+          $missing = @($req | Where-Object { $have -notcontains $_ })
+          if ($missing.Count -gt 0) {
+            Write-Error ("Modules missing from bundled runtime: " + ($missing -join ', '))
+            exit 1
+          }
+          Write-Host ("Runtime smoke OK: launcher runs, all " + $req.Count + " required modules bundled.")
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'No MSIX produced by maven build.' }
+          $helper = 'target\installer-msix\install-pandev.ps1'
+          if (-not (Test-Path $helper)) { throw 'install-pandev.ps1 missing alongside MSIX.' }
+
+          $zipName = "pandev-cli-plugin_${env:VERSION}_Windows_amd64.zip"
+          $zipDir = 'win-staging'
+          New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+          Copy-Item -Path $msix.FullName -Destination $zipDir
+          Copy-Item -Path $helper -Destination $zipDir
+
+          Compress-Archive -Path "$zipDir\*" -DestinationPath $zipName -Force
+          Write-Host "Built $zipName ($(Get-Item $zipName | Select-Object -ExpandProperty Length) bytes)"
+          "ASSET=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha-windows-latest-amd64
+          path: ${{ env.ASSET }}
+
+      # Портативный архив для npm-канала: тот же app-image, что уходит в MSIX,
+      # только без установщика. Без него npx на Windows не работает, а продукт
+      # обязан ставиться одинаково на всех платформах.
+      - name: Package portable zip for npm
+        shell: pwsh
+        run: |
+          $img = 'target\installer\pandev'
+          if (-not (Test-Path "$img\pandev.exe")) { throw 'app-image not found at ' + $img }
+          $zipName = "pandev-cli-plugin_${env:VERSION}_Windows_amd64_portable.zip"
+          Compress-Archive -Path "$img\*" -DestinationPath $zipName -Force
+          Write-Host "Built $zipName ($((Get-Item $zipName).Length) bytes)"
+          "PORTABLE=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha-windows-latest-amd64-portable
+          path: ${{ env.PORTABLE }}
+
+
+  publish:
+    name: Publish Alpha Release
+    needs: [version, build, build-windows]
+    # Windows may fail without withholding macOS/Linux artifacts from users —
+    # same contract the beta channel has.
+    if: always() && needs.version.result == 'success' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: v${{ needs.version.outputs.version }}-alpha
+    steps:
+      # Source checkout — for the formula/installer templates in release/.
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" src
+          if [ -n "$SRC_SHA" ]; then git -C src checkout --quiet "$SRC_SHA"; fi
+
+      # This repo's main — the rendered formula and installers land here.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: showcase
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Compute SHA256 for each asset
+        id: sha
+        run: |
+          cd release-assets
+          ls -la
+          # macOS/Linux are mandatory — fail loudly if any is missing.
+          MACOS_AMD64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_macOS_amd64.tar.gz" | awk '{print $1}')
+          MACOS_ARM64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_macOS_arm64.tar.gz" | awk '{print $1}')
+          LINUX_AMD64_SHA=$(sha256sum "pandev-cli-plugin_${VERSION}_Linux_amd64.tar.gz" | awk '{print $1}')
+          # Windows is optional here too.
+          WINDOWS_ZIP="pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
+          if [ -f "$WINDOWS_ZIP" ]; then
+              WINDOWS_AMD64_SHA=$(sha256sum "$WINDOWS_ZIP" | awk '{print $1}')
+          else
+              WINDOWS_AMD64_SHA=""
+              echo "::warning::Windows zip not found (build-windows likely failed). Publishing macOS/Linux only."
+          fi
+          echo "macos_amd64=$MACOS_AMD64_SHA" >> "$GITHUB_OUTPUT"
+          echo "macos_arm64=$MACOS_ARM64_SHA" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$LINUX_AMD64_SHA" >> "$GITHUB_OUTPUT"
+          echo "windows_amd64=$WINDOWS_AMD64_SHA" >> "$GITHUB_OUTPUT"
+
+      # Beta tags are recreated in place — drop the previous release + tag.
+      - name: Reset existing release and tag (if any)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
+
+      - name: Create Alpha Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Beta ${{ env.VERSION }}
+          body: |
+            Alpha release
+
+            Version: ${{ env.VERSION }}
+            Source: git.pandev.io ${{ env.SRC_REF }} @ ${{ env.SRC_SHA || 'HEAD' }}
+          files: |
+            release-assets/pandev-cli-plugin_*.tar.gz
+            release-assets/pandev-cli-plugin_*.zip
+          draft: false
+          prerelease: true
+
+  # ===========================================================================
+  # npm channel: the same tarballs repacked into npm packages (esbuild scheme:
+  # platform packages + thin `pandev` launcher), published under dist-tag alpha.
+  # npm versions are immutable; repack.mjs skips already-published versions, so
+  # the job stays green when pom.xml wasn't bumped (no publish happens).
+  # ===========================================================================
+  npm-alpha:
+    name: Publish npm alpha (npx pandev@alpha)
+    needs: [version, build, publish]
+    if: always() && needs.build.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout source from GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          if [ -n "$SRC_SHA" ]; then git checkout --quiet "$SRC_SHA"; fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Repack tarballs into npm packages and publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node release/npm/repack.mjs --version "$VERSION" --assets release-assets --tag alpha

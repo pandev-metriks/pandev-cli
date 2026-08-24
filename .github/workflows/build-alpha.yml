@@ -347,7 +347,14 @@ jobs:
     needs: [version, build, build-windows]
     # Windows may fail without withholding macOS/Linux artifacts from users —
     # same contract the beta channel has.
-    if: always() && needs.version.result == 'success' && needs.build.result == 'success'
+    # Windows обязателен. Раньше он был опциональным, и это стоило двух версий
+    # подряд: три платформы публиковались, win32 нет, а лаунчер уезжал в npm со
+    # списком optionalDependencies БЕЗ win32 — npm-версии неизменяемы, так что
+    # починить такой релиз уже нельзя, только выпустить следующий. Пусть лучше
+    # альфы не будет вовсе, чем будет альфа, ломающая установку на Windows.
+    if: >-
+      always() && needs.version.result == 'success' && needs.build.result == 'success'
+      && needs.build-windows.result == 'success'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -426,8 +433,10 @@ jobs:
   # ===========================================================================
   npm-alpha:
     name: Publish npm alpha (npx pandev@alpha)
-    needs: [version, build, publish]
-    if: always() && needs.build.result == 'success' && needs.publish.result == 'success'
+    needs: [version, build, build-windows, publish]
+    if: >-
+      always() && needs.build.result == 'success' && needs.publish.result == 'success'
+      && needs.build-windows.result == 'success'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}

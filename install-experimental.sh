@@ -14,17 +14,17 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.0               — semantic version, e.g. 2.5.0
-#    v2.5.0-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.14               — semantic version, e.g. 2.5.0
+#    v2.5.14-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#    acd05d57afea5be8f7ff5993526f8d5aa442d255b4f13170b0638869ef0b50c3  — checksum of the Windows .zip asset
+#    f4d9e083e01c77fbd0b9c98e528a6325a0808994fbf463ddaf119820a1824766  — checksum of the Windows .zip asset
 #  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
 # =============================================================================
 set -e
 
-VERSION="2.5.0"
-TAG="v2.5.0-beta"
+VERSION="2.5.14"
+TAG="v2.5.14-beta"
 CHANNEL="Beta"
 FORMULA_NAME="pandev-cli-plugin-beta"
 
@@ -47,7 +47,7 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="acd05d57afea5be8f7ff5993526f8d5aa442d255b4f13170b0638869ef0b50c3"
+WINDOWS_AMD64_SHA256="f4d9e083e01c77fbd0b9c98e528a6325a0808994fbf463ddaf119820a1824766"
 
 # -------------------------------------------------------
 # 1. Root check (skipped on Windows — Git Bash has no real "root")

@@ -224,6 +224,19 @@ if [[ "$OS" == "Darwin" ]] && command -v brew &>/dev/null; then
     # pandev-metriks/pandev-cli — the same name clients have always had.
     echo "Tapping $TAP from $TAP_URL..."
     brew tap "$TAP" "$TAP_URL" </dev/null
+    # Homebrew 6.0+ refuses formulas from a tap nobody has trusted. The formula
+    # named on the command line is trusted implicitly, but each of ours declares
+    # `conflicts_with` the other channel, so brew loads that sibling too and
+    # stops on it: "Refusing to load formula ...-beta from untrusted tap" (seen
+    # on Homebrew 7.0.4). Trust exactly the two formulas this installer is
+    # about - not the whole tap, as Homebrew recommends. Older brew has no
+    # `trust` command: nothing to do there.
+    if brew trust --help &>/dev/null; then
+        for TRUSTED in pandev-cli-plugin pandev-cli-plugin-beta; do
+            brew trust --formula "$TAP/$TRUSTED" </dev/null \
+                || echo "WARNING: could not mark $TAP/$TRUSTED as trusted; Homebrew may refuse to install it."
+        done
+    fi
     echo "Installing via Homebrew..."
     # Redirect stdin from /dev/null so brew install can't consume bytes from
     # the script itself when invoked via `curl ... | bash` (which would make

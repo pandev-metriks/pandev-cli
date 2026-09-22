@@ -26,9 +26,9 @@
     the rendered copies - the install logic itself is channel-agnostic.
 
     Tokens replaced by the publish step (do NOT pre-fill them here):
-      2.5.16               - semantic version, e.g. 2.5.0
-      v2.5.16-beta                   - release tag hosting the assets, e.g. v2.5.0-beta
-      fb7e7974695ff9dd583d92c183d108606b204bec617e151fcb1e88acd0744d74  - checksum of the Windows .zip asset
+      2.5.17               - semantic version, e.g. 2.5.0
+      v2.5.17-beta                   - release tag hosting the assets, e.g. v2.5.0-beta
+        - checksum of the Windows .zip asset
       pandev-metriks/pandev-cli                  - repo whose GitHub release hosts the .zip
       Beta               - display label: Beta or Stable
 
@@ -41,7 +41,14 @@
       - DON'T use `exit` for error paths (would close the user's terminal).
     Everything runs inside a scriptblock `& { ... }` so $ErrorActionPreference
     is scoped to that block, and error paths use `return` instead of `exit`.
+
+    UNINSTALL (PDM-4862): the same script removes PanDev of any version, with
+    or without the package still installed:
+      & ([scriptblock]::Create((iwr -useb <url>))) -Uninstall
 #>
+param(
+    [switch] $Uninstall
+)
 
 # Wrap the whole installer in a scriptblock so any preference changes
 # (especially $ErrorActionPreference = 'Stop') stay scoped to the block.
@@ -59,10 +66,229 @@
         # Pre-PS 5.0 / locked-down hosts. Not fatal.
     }
 
+    # -----------------------------------------------------------------------
+    # Uninstall. MSIX never runs our code on removal, and old versions' own
+    # `pandev uninstall-hooks` stripped only the hooks, leaving the watcher
+    # running. This script is always the current one, so it removes PanDev of
+    # any version, whether or not the package is still installed. No
+    # administrator rights needed.
+    # -----------------------------------------------------------------------
+    if ($Uninstall) {
+        $state = @{ Clean = $true; Reported = $false }
+        function Write-Removed([string]$what) {
+            $state.Reported = $true
+            Write-Host "  [OK] $what" -ForegroundColor Green
+        }
+        function Write-Note([string]$what) {
+            $state.Reported = $true
+            Write-Host "  $what" -ForegroundColor Gray
+        }
+        function Write-Left([string]$what, [string]$fix) {
+            $state.Clean = $false
+            $state.Reported = $true
+            Write-Host "  [X] $what" -ForegroundColor Red
+            if ($fix) {
+                Write-Host "      $fix" -ForegroundColor Yellow
+            }
+        }
+        function Remove-OurPath([string]$path, [string]$what) {
+            if (-not (Test-Path -LiteralPath $path)) {
+                return
+            }
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $path) {
+                Write-Left "$what - could not remove $path" 'Delete it by hand.'
+            } else {
+                Write-Removed $what
+            }
+        }
+
+        Write-Host ""
+        Write-Host "Removing PanDev from this Windows account..." -ForegroundColor Cyan
+        Write-Host ""
+
+        # npx pandev is a SEPARATE PRODUCT: its own install command, its own uninstall
+        # (PDM-4862). This script removes the team edition and leaves the npx edition running,
+        # with its autostart, its program copy and its data. Any trace means it lives here.
+        $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+        $npxCopy = Join-Path $env:LOCALAPPDATA 'pandev'
+        $npxMarks = @(
+            (Join-Path $startup 'pandev-dashboard.vbs'),
+            (Join-Path $startup 'pandev-dashboard-open.vbs'),
+            (Join-Path $HOME '.config\pandev\b2c-dashboard.cmd'),
+            (Join-Path $HOME '.config\pandev\b2c.firstrun'),
+            (Join-Path $HOME '.config\pandev\autostart.off'),
+            (Join-Path $npxCopy 'app')
+        )
+        $npxStays = @($npxMarks | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count -gt 0
+
+        # 1. Everything of OURS that runs. The npx dashboard runs pandev.exe too - out of its
+        #    private copy, with 'dashboard --serve' on the command line - and its restart loop
+        #    is a cmd.exe on b2c-dashboard.cmd. Both are told apart and left alone. taskkill
+        #    through cmd: its "not found" on stderr must not turn into an error here.
+        #    The list comes from Get-Process, which always works; WMI is asked only for the
+        #    command lines that tell npx apart. With WMI unavailable the path alone does it,
+        #    so the watcher is stopped either way.
+        $images = @('pandev-watcher', 'pandev', 'pandev-mcp')
+        $teamProcesses = {
+            $lines = @{}
+            foreach ($row in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+                $lines[[int]$row.ProcessId] = [string]$row.CommandLine
+            }
+            @(Get-Process -Name $images -ErrorAction SilentlyContinue | Where-Object {
+                $line = $lines[[int]$_.Id]
+                $isNpx = ($line -and ($line -match 'b2c-dashboard' -or $line -match 'dashboard\s+--serve' -or
+                                      $line -match '\\_npx\\'))
+                if (-not $isNpx -and $_.Path) {
+                    $isNpx = $_.Path -match '\\_npx\\' -or
+                        ($npxCopy -and $_.Path.StartsWith($npxCopy, [StringComparison]::OrdinalIgnoreCase))
+                }
+                -not $isNpx
+            })
+        }
+        $found = $false
+        for ($round = 0; $round -lt 3; $round++) {
+            $running = & $teamProcesses
+            if ($running.Count -eq 0) {
+                break
+            }
+            $found = $true
+            foreach ($proc in $running) {
+                $null = cmd.exe /c "taskkill /F /T /PID $($proc.Id) >nul 2>&1"
+            }
+            Start-Sleep -Seconds 2
+        }
+        $left = & $teamProcesses
+        if ($left.Count -gt 0) {
+            $pids = ($left | ForEach-Object { $_.Id }) -join ', '
+            Write-Left "PanDev processes are still running (PID $pids)" 'End them in Task Manager, then run this command again.'
+        } elseif ($found) {
+            Write-Removed 'PanDev processes stopped'
+        }
+
+        # 2. Hooks: each "# --- PANDEV <X> START ---" block goes with its own END; a START without
+        #    an END leaves the file untouched. The encoding is kept - a BOM matters to PowerShell 5.1.
+        # MyDocuments can come back empty - a roaming or locked-down profile, a wiped
+        # shell-folder value in the registry. Join-Path then throws and the uninstall stops
+        # at the hooks, never reaching the data or the package. So the profiles are only
+        # looked at when there is a path to look at.
+        $docs = [Environment]::GetFolderPath('MyDocuments')
+        $hookFiles = @()
+        if ($docs) {
+            $hookFiles += @(
+                (Join-Path $docs 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+                (Join-Path $docs 'WindowsPowerShell\profile.ps1'),
+                (Join-Path $docs 'PowerShell\Microsoft.PowerShell_profile.ps1'),
+                (Join-Path $docs 'PowerShell\profile.ps1')
+            )
+        } else {
+            Write-Note 'Documents folder is unknown - PowerShell profiles were not checked for hooks'
+        }
+        $hookFiles += @(
+            (Join-Path $HOME '.bashrc'),
+            (Join-Path $HOME '.bash_profile')
+        )
+        foreach ($file in $hookFiles) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                continue
+            }
+            $text = [IO.File]::ReadAllText($file)
+            if ($text -notmatch '# --- PANDEV [A-Z ]+ START ---') {
+                continue
+            }
+            $stripped = [regex]::Replace($text,
+                '(?s)(\r?\n)?# --- PANDEV (?<n>[A-Z ]+) START ---.*?# --- PANDEV \k<n> END ---(\r?\n)?', '')
+            if ($stripped -ne $text) {
+                $newline = "`n"
+                if ($text.Contains("`r`n")) {
+                    $newline = "`r`n"
+                }
+                $stripped = ([regex]::Replace($stripped, '(\r?\n){3,}', $newline + $newline)).Trim()
+                $bytes = [IO.File]::ReadAllBytes($file)
+                $encoding = New-Object System.Text.UTF8Encoding($false)
+                if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+                    $encoding = New-Object System.Text.UTF8Encoding($true)
+                } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+                    $encoding = [System.Text.Encoding]::Unicode
+                }
+                if ([string]::IsNullOrWhiteSpace($stripped)) {
+                    Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+                } else {
+                    [IO.File]::WriteAllText($file, $stripped + $newline, $encoding)
+                }
+            }
+            if ((Test-Path -LiteralPath $file) -and ([IO.File]::ReadAllText($file) -match '# --- PANDEV [A-Z ]+ START ---')) {
+                Write-Left "A PanDev hook is still in $file" "Delete the lines from '# --- PANDEV ... START ---' to its END."
+            } else {
+                Write-Removed "Hook removed from $file"
+            }
+        }
+
+        # 3. Cost data outside the package. On Windows the team edition keeps its own state in
+        #    the package's LocalState, and these places hold what `pandev cost web` wrote -
+        #    which is also where the npx edition lives. So they go only when it does not.
+        #    ~/pandev-cost.html is an offline copy of the dashboard and holds prompt texts.
+        if ($npxStays) {
+            Write-Note 'npx pandev stays - it is a separate product: remove it with  npx pandev uninstall'
+        } else {
+            Remove-OurPath (Join-Path $HOME '.config\pandev') 'Dashboard settings and data removed'
+            Remove-OurPath (Join-Path $HOME '.pandev') 'Local data removed (.pandev)'
+            Remove-OurPath (Join-Path $HOME 'pandev-open.html') 'Dashboard jump page removed'
+            Remove-OurPath (Join-Path $HOME 'pandev-cost.html') 'Dashboard page removed (pandev-cost.html)'
+            # The npm edition installed globally (npm i -g pandev) is a product of its own: it is
+            # named, never removed here. Through cmd: npm is npm.cmd, and its stderr must not
+            # turn into an error.
+            if (Get-Command npm -ErrorAction SilentlyContinue) {
+                $null = cmd.exe /c "npm ls -g --depth=0 pandev >nul 2>&1"
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Note 'The npx edition is installed globally (npm i -g pandev) - remove it with  npx pandev uninstall'
+                }
+            }
+        }
+
+        # 4. The package last: Windows deletes its LocalState (token, queue, logs) with it.
+        if (@(Get-AppxPackage -Name 'PandevInc.PandevCLIPlugin' -ErrorAction SilentlyContinue).Count -gt 0) {
+            try {
+                Get-AppxPackage -Name 'PandevInc.PandevCLIPlugin' | Remove-AppxPackage -ErrorAction Stop
+            } catch {
+                # checked right below
+            }
+            if (@(Get-AppxPackage -Name 'PandevInc.PandevCLIPlugin' -ErrorAction SilentlyContinue).Count -gt 0) {
+                Write-Left 'The PanDev package is still installed' 'Settings > Apps > Installed apps > PanDev CLI Plugin > Uninstall'
+            } else {
+                Write-Removed 'Package removed (PanDev CLI Plugin)'
+            }
+        }
+
+        if (-not $state.Reported) {
+            Write-Host '  Nothing of PanDev was found for this account.'
+        }
+        $certs = @(Get-ChildItem -Path 'Cert:\LocalMachine\TrustedPeople' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Subject -match 'PanDev' })
+        if ($certs.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  The PanDev publisher certificate stays trusted on this computer: other accounts" -ForegroundColor Gray
+            Write-Host "  may still use PanDev. To remove it, in PowerShell as administrator:" -ForegroundColor Gray
+            Write-Host "    Get-ChildItem Cert:\LocalMachine\TrustedPeople | Where-Object Subject -match 'PanDev' | Remove-Item" -ForegroundColor Gray
+        }
+        Write-Host ""
+        if ($state.Clean) {
+            if ($npxStays) {
+                Write-Host 'The PanDev CLI Plugin is removed.' -ForegroundColor Green
+            } else {
+                Write-Host 'PanDev is fully removed.' -ForegroundColor Green
+            }
+        } else {
+            Write-Host 'Some parts of PanDev are still here - see [X] above.' -ForegroundColor Red
+        }
+        Write-Host ""
+        return
+    }
+
     # Templated by CI. Publish step rewrites these literals on every release.
-    $VERSION = '2.5.16'
-    $TAG = 'v2.5.16-beta'
-    $WINDOWS_AMD64_SHA256 = 'fb7e7974695ff9dd583d92c183d108606b204bec617e151fcb1e88acd0744d74'
+    $VERSION = '2.5.17'
+    $TAG = 'v2.5.17-beta'
+    $WINDOWS_AMD64_SHA256 = ''
 
     $REPO = 'pandev-metriks/pandev-cli'
     $ASSET_NAME = "pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
@@ -88,7 +314,7 @@
 
     # Detect un-templated state by SHA *shape* (64 lowercase hex chars),
     # NOT by literal token equality. Earlier we compared against
-    # 'fb7e7974695ff9dd583d92c183d108606b204bec617e151fcb1e88acd0744d74', but the publish step's str.replace runs
+    # '', but the publish step's str.replace runs
     # over THE WHOLE FILE - including the literal token inside this check
     # - so after templating the comparison became
     # "$WINDOWS_AMD64_SHA256 -eq <the actual hash>", which is always true,

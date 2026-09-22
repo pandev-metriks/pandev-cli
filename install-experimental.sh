@@ -18,7 +18,7 @@
 #    v2.5.17-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#      — checksum of the Windows .zip asset
+#    3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980  — checksum of the Windows .zip asset
 #  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
 # =============================================================================
 set -e
@@ -47,7 +47,7 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256=""
+WINDOWS_AMD64_SHA256="3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"

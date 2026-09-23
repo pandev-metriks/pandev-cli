@@ -26,9 +26,9 @@
     the rendered copies - the install logic itself is channel-agnostic.
 
     Tokens replaced by the publish step (do NOT pre-fill them here):
-      2.5.17               - semantic version, e.g. 2.5.0
-      v2.5.17-beta                   - release tag hosting the assets, e.g. v2.5.0-beta
-      3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980  - checksum of the Windows .zip asset
+      2.5.18               - semantic version, e.g. 2.5.0
+      v2.5.18-beta                   - release tag hosting the assets, e.g. v2.5.0-beta
+      eaf3b45fd510f34f28512a9e22409db9b278166d7d15f845d58aeea22a951c50  - checksum of the Windows .zip asset
       pandev-metriks/pandev-cli                  - repo whose GitHub release hosts the .zip
       Beta               - display label: Beta or Stable
 
@@ -286,9 +286,9 @@ param(
     }
 
     # Templated by CI. Publish step rewrites these literals on every release.
-    $VERSION = '2.5.17'
-    $TAG = 'v2.5.17-beta'
-    $WINDOWS_AMD64_SHA256 = '3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980'
+    $VERSION = '2.5.18'
+    $TAG = 'v2.5.18-beta'
+    $WINDOWS_AMD64_SHA256 = 'eaf3b45fd510f34f28512a9e22409db9b278166d7d15f845d58aeea22a951c50'
 
     $REPO = 'pandev-metriks/pandev-cli'
     $ASSET_NAME = "pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
@@ -314,7 +314,7 @@ param(
 
     # Detect un-templated state by SHA *shape* (64 lowercase hex chars),
     # NOT by literal token equality. Earlier we compared against
-    # '3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980', but the publish step's str.replace runs
+    # 'eaf3b45fd510f34f28512a9e22409db9b278166d7d15f845d58aeea22a951c50', but the publish step's str.replace runs
     # over THE WHOLE FILE - including the literal token inside this check
     # - so after templating the comparison became
     # "$WINDOWS_AMD64_SHA256 -eq <the actual hash>", which is always true,
@@ -476,6 +476,7 @@ param(
     # starts the watcher itself.
     # -----------------------------------------------------------------------
     $loggedIn = $false
+    $pkg = $null
     try {
         $pkg = Get-AppxPackage -Name 'PandevInc.PandevCLIPlugin' -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($pkg) {
@@ -502,6 +503,22 @@ param(
         if (-not $loggedIn) {
             Write-Host "Run: pandev login"
         }
+    } elseif (-not $pkg) {
+        # The elevated window said "installed" and this one cannot see the
+        # package at all: it was registered for a DIFFERENT account. That is
+        # what happens when UAC is answered with somebody else's administrator
+        # credentials (PDM-4888) - MSIX packages are per-user, so the person at
+        # the keyboard gets nothing: no package, no alias, no 'pandev'.
+        # Advising the alias toggle here sends people looking for a switch that
+        # is not there, so say the real thing instead.
+        Write-Host "The package is NOT registered for this account ($env:USERNAME)." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Windows installs MSIX packages per user. If the UAC prompt was answered"
+        Write-Host "  with an administrator's credentials rather than yours, the package went"
+        Write-Host "  to that administrator's account, not to yours."
+        Write-Host ""
+        Write-Host "  The certificate is trusted machine-wide now, so this needs no rights:"
+        Write-Host "  run this same command again as yourself - it will install without a UAC prompt."
     } else {
         # PATH is now fixed for future shells, but this one may still be stale,
         # or the appExecutionAlias didn't register / is toggled off.

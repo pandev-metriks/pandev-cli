@@ -14,17 +14,17 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.17               — semantic version, e.g. 2.5.0
-#    v2.5.17-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.18               — semantic version, e.g. 2.5.0
+#    v2.5.18-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#    3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980  — checksum of the Windows .zip asset
+#    eaf3b45fd510f34f28512a9e22409db9b278166d7d15f845d58aeea22a951c50  — checksum of the Windows .zip asset
 #  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
 # =============================================================================
 set -e
 
-VERSION="2.5.17"
-TAG="v2.5.17-beta"
+VERSION="2.5.18"
+TAG="v2.5.18-beta"
 CHANNEL="Beta"
 FORMULA_NAME="pandev-cli-plugin-beta"
 
@@ -47,7 +47,7 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="3603e30fe77b5aa4c20770bbb8a88c9529cb049d9623d8114e1c0a3f12c04980"
+WINDOWS_AMD64_SHA256="eaf3b45fd510f34f28512a9e22409db9b278166d7d15f845d58aeea22a951c50"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"
@@ -118,6 +118,9 @@ stop_team_watcher() {
         systemctl --user disable --now pandev-watcher.service 2>/dev/null || true
         rm -f "$HOME/.config/systemd/user/pandev-watcher.service"
         systemctl --user daemon-reload 2>/dev/null || true
+        # Юнит снят с диска, но systemd помнит его как failed: служба падает от нашего же
+        # SIGTERM, и запись остаётся в `systemctl --user --failed` до перезагрузки.
+        systemctl --user reset-failed pandev-watcher.service 2>/dev/null || true
     fi
     pkill -u "$(id -u)" -f 'pandev-myapp\.jar --watcher' 2>/dev/null || true
 }

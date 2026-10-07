@@ -1,0 +1,63 @@
+# =============================================================================
+# ВРЕМЕННЫЙ (PDM-5088): проверка подписи MSIX и переезда с тестового издателя
+# на настоящем Windows-раннере до беты. Ничего не публикует и не тратит лимит
+# eSigner: пакет подписывается одноразовым самоподписанным сертификатом.
+# Удалить после мержа PDM-5088 — дальше то же проверяет последний шаг альфы.
+# =============================================================================
+name: Try MSIX signing (PDM-5088, temporary)
+run-name: "MSIX signing · ${{ inputs.ref }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GitLab branch to build"
+        required: true
+        default: "feature/PDM-5088"
+
+permissions:
+  contents: read
+
+env:
+  GITLAB_REPO: git.pandev.io/pandev/metrics/plugins/pandev-metrics-cli.git
+  SRC_REF: ${{ inputs.ref }}
+
+jobs:
+  msix:
+    name: Build, sign (throwaway), move off the test publisher
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source from GitLab
+        shell: bash
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 20 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+          git log -1 --oneline
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      # Maven packs the MSIX unsigned; signing is the next step.
+      - name: Build MSIX
+        shell: pwsh
+        run: mvn -q -ntp clean package -DskipTests -Pwindows-installer-msix
+
+      - name: Sign MSIX (throwaway certificate)
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'No MSIX produced by maven build.' }
+          ./build/windows-msix/sign-msix.ps1 -MsixPath $msix.FullName -SelfSigned
+
+      # 2.5.19 (тестовый сертификат) с токеном, очередью и хуками ставится заново
+      # этой сборкой через её install-pandev.ps1: данные и хуки обязаны переехать
+      # в новый пакет, старый пакет — исчезнуть.
+      - name: Smoke — move an install off the test publisher
+        shell: powershell
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          ./ci/smoke/msix-migration.ps1 -NewMsix $msix.FullName

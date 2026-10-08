@@ -149,7 +149,24 @@ jobs:
           SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
           APP_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-          exec "$APP_HOME/runtime/bin/java" -jar "$APP_HOME/lib/pandev-myapp.jar" "$@"
+          # Бюджет памяти — по роли процесса (PDM-4874):
+          # - вотчер и MCP-заглушка (--watcher, --mcp-server) живут сутками и историю журналов
+          #   не читают: 320 МБ. Без потолка JVM берёт четверть ОЗУ и держит её — на 545 МБ
+          #   журналов процесс сидел на 1.6 ГБ RSS при 32 МБ живых данных;
+          # - всё остальное — команды (cost и прочие) и демон дашборда (dashboard --serve) —
+          #   разбирает историю журналов, и живая куча холодного разбора растёт на ~70 МБ с
+          #   каждым ГБ: под 320 МБ cost на 5 ГБ падал по OOM с пустым выводом, 1 ГБ кончается
+          #   около 10 ГБ. Им четверть ОЗУ: потолок растёт с машиной, а Serial GC с FreeRatio
+          #   держит кучу у живых данных, а не у потолка.
+          # Те же роли — у лаунчеров Windows (pom.xml, src/main/jpackage) и .deb; сторож —
+          # MemoryBudgetTest. Переопределяется снаружи целиком: PANDEV_JVM="-Xmx2g" pandev ...
+          case "${1:-}" in
+            --watcher|--mcp-server) PANDEV_HEAP="-Xmx320m" ;;
+            *) PANDEV_HEAP="-XX:MaxRAMPercentage=25" ;;
+          esac
+          PANDEV_JVM="${PANDEV_JVM:--XX:+UseSerialGC $PANDEV_HEAP -XX:MaxMetaspaceSize=96m -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25}"
+          # shellcheck disable=SC2086
+          exec "$APP_HOME/runtime/bin/java" $PANDEV_JVM -jar "$APP_HOME/lib/pandev-myapp.jar" "$@"
           EOF
 
           chmod +x app-staging/bin/pandev
@@ -158,13 +175,22 @@ jobs:
       - name: Create Runtime (jlink)
         run: |
           MODS=$(jdeps --ignore-missing-deps --print-module-deps target/*.jar)
-          MODS="$MODS,jdk.crypto.ec,java.net.http,java.logging,java.xml"
+          # jdeps видит только статические ссылки. jdk.unsupported (sun.misc.Unsafe)
+          # Gson грузит рефлексией: без модуля кэш разбора не читался ни разу, и
+          # каждый cost разбирал всю историю заново — 20 с вместо 2 на 1.7 ГБ журналов.
+          MODS="$MODS,jdk.crypto.ec,java.net.http,java.logging,java.xml,jdk.unsupported"
 
+          # --generate-cds-archive кладёт в рантайм архив классов JDK: холодный старт
+          # любой команды ~165 → ~100 мс. classes_nocoops.jsa нужен только куче
+          # больше 32 ГБ — у CLI её не бывает, а в архиве это лишние ~4 МБ; без
+          # файла JVM в таком случае просто стартует без CDS.
           jlink --add-modules "$MODS" \
             --no-man-pages \
             --no-header-files \
             --compress=zip-6 \
+            --generate-cds-archive \
             --output app-staging/runtime
+          rm -f app-staging/runtime/lib/server/classes_nocoops.jsa
 
       - name: Create tar.gz
         run: |
@@ -182,6 +208,9 @@ jobs:
         run: |
           mkdir smoke && tar -xzf "$ASSET" -C smoke
           smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version
+          # -Xshare:on падает, если архива CDS нет или он не подходит этой JVM:
+          # молча потерянный архив вернул бы старт без него, и никто бы не заметил.
+          smoke/runtime/bin/java -Xshare:on -jar smoke/lib/pandev-myapp.jar --version >/dev/null
           smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar help >/dev/null
           PANDEV_B2C=1 HOME="$(mktemp -d)" smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version >/dev/null
           REQ=$(jdeps --ignore-missing-deps --print-module-deps target/pandev-myapp.jar | tr ',' '\n')
@@ -207,8 +236,9 @@ jobs:
   # path. Driven by the `windows-installer-msix` Maven profile, which already
   # invokes build/windows-msix/build-windows-msix.ps1 internally.
   #
-  # Signing uses the static test PFX checked into the source repo; see the
-  # comments in the source's build/windows-msix/ for the trust-model caveats.
+  # Signing: a throwaway self-signed certificate with the release Subject
+  # (PDM-5088) - no secrets, no eSigner quota. Beta and prod sign with the
+  # real SSL.com certificate.
   # ===========================================================================
   build-windows:
     name: Build Alpha (windows-latest - amd64)
@@ -216,8 +246,6 @@ jobs:
     runs-on: windows-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      PFX_PATH: 'build/windows-msix/pandev-test-signing.pfx'
-      PFX_PASSWORD: 'pandev-test'
 
     steps:
       - name: Checkout source from GitLab
@@ -234,23 +262,41 @@ jobs:
           java-version: 21
           cache: maven
 
-      # Sign straight from the PFX via signtool /f /p — no cert store import;
-      # store-resident certs aren't reliably visible to the Maven-spawned
-      # signtool on GitHub-hosted Windows runners.
       # Same suite on a real Windows runner — this is where the
       # JSON-escaped-paths class of bugs shows up (see PDM-4083).
       - name: Run unit tests
         shell: pwsh
         run: mvn -B -ntp test
 
+      # Ветка до PDM-5088 подписывала тестовым ключом из репозитория, а этот
+      # workflow его уже не передаёт: без проверки альфа такой ветки вышла бы с
+      # неподписанным MSIX или упала бы в глубине сборки. Её надо перебазировать
+      # на dev.
+      - name: Branch knows how to sign
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build/windows-msix/sign-msix.ps1)) {
+            throw "The branch predates PDM-5088 (no build/windows-msix/sign-msix.ps1): rebase it on dev to build an alpha."
+          }
+
+      # Maven packs the MSIX unsigned; signing is the next step (PDM-5088).
       - name: Build MSIX
         shell: pwsh
         run: |
           mvn -q -ntp clean package `
               -DskipTests `
-              -Pwindows-installer-msix `
-              "-DpfxFile=$env:PFX_PATH" `
-              "-DpfxPassword=$env:PFX_PASSWORD"
+              -Pwindows-installer-msix
+
+      # Альфа подписывается одноразовым самоподписанным сертификатом с тем же
+      # Subject (PDM-5088): без секретов и без расхода лимита eSigner. Ставится
+      # она только после того, как администратор доверит этот сертификат, —
+      # install-pandev.ps1 печатает команду. Бета и прод — настоящий сертификат.
+      - name: Sign MSIX (throwaway certificate)
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'No MSIX produced by maven build.' }
+          ./build/windows-msix/sign-msix.ps1 -MsixPath $msix.FullName -SelfSigned
 
       # Windows is the platform where the hand-maintained <addModules> list
       # can silently diverge from what the jar needs (NoClassDefFoundError at
@@ -341,6 +387,16 @@ jobs:
           name: alpha-windows-latest-amd64-portable
           path: ${{ env.PORTABLE }}
 
+      # Переезд со старого тестового издателя: установка 2.5.19 с токеном,
+      # очередью и хуками ставится заново этой сборкой — данные и хуки
+      # обязаны переехать в новый пакет, старый — исчезнуть. Последним шагом:
+      # pandev activate пишет хуки в профили PowerShell раннера, и шаги после
+      # него шли бы уже с ними. Упал — джоб красный, альфа не публикуется.
+      - name: Smoke — move an install off the test publisher
+        shell: powershell
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          ./ci/smoke/msix-migration.ps1 -NewMsix $msix.FullName
 
   publish:
     name: Publish Alpha Release

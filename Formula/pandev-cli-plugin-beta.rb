@@ -9,30 +9,30 @@
 # beta of the same version — hence no immutability assumptions here.
 #
 # Tokens replaced by CI (do NOT pre-fill):
-#   2.5.19           semantic version, e.g. 2.5.0
-#   v2.5.19-beta               release tag hosting the assets, e.g. v2.5.0-beta
-#   cfe6bbad1602eee01fe8db9d13b9aafe89b8088e74ffa32c3fc0040d3bda78ea / 1eb6f9596aa6bcf2adf5389881b6ee9754874d592e46e03775bfe5ed4181a679 / 4215797f71647311b36353bd9af31927afb5ea8a649c24739f8df1e53dfd7902  asset checksums
+#   2.5.21           semantic version, e.g. 2.5.0
+#   v2.5.21-beta               release tag hosting the assets, e.g. v2.5.0-beta
+#   9d58a214d00b7735f115a03f1ddc62f195bb63efc581a24cf209a2d3889ad84d / 86a0b3aa726401f44c3301ce5422813ca455d317bf4e7704f35c87a9898feaf9 / a968761b6b4141c8f325f16ff41146aeb6f445d1f1eac2daa593e06ecdd5b57a  asset checksums
 class PandevCliPluginBeta < Formula
   desc "PanDev Metrics CLI (beta channel)"
   homepage "https://github.com/pandev-metriks/pandev-cli"
-  version "2.5.19"
+  version "2.5.21"
 
   depends_on "jq"
   depends_on "git"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.19-beta/pandev-cli-plugin_2.5.19_macOS_amd64.tar.gz"
-      sha256 "cfe6bbad1602eee01fe8db9d13b9aafe89b8088e74ffa32c3fc0040d3bda78ea"
+      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.21-beta/pandev-cli-plugin_2.5.21_macOS_amd64.tar.gz"
+      sha256 "9d58a214d00b7735f115a03f1ddc62f195bb63efc581a24cf209a2d3889ad84d"
     else
-      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.19-beta/pandev-cli-plugin_2.5.19_macOS_arm64.tar.gz"
-      sha256 "1eb6f9596aa6bcf2adf5389881b6ee9754874d592e46e03775bfe5ed4181a679"
+      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.21-beta/pandev-cli-plugin_2.5.21_macOS_arm64.tar.gz"
+      sha256 "86a0b3aa726401f44c3301ce5422813ca455d317bf4e7704f35c87a9898feaf9"
     end
   end
 
   on_linux do
-    url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.19-beta/pandev-cli-plugin_2.5.19_Linux_amd64.tar.gz"
-    sha256 "4215797f71647311b36353bd9af31927afb5ea8a649c24739f8df1e53dfd7902"
+    url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.21-beta/pandev-cli-plugin_2.5.21_Linux_amd64.tar.gz"
+    sha256 "a968761b6b4141c8f325f16ff41146aeb6f445d1f1eac2daa593e06ecdd5b57a"
   end
 
   # No `conflicts_with "pandev-cli-plugin"`: to check it, brew loads the stable formula, and

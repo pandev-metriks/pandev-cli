@@ -14,17 +14,17 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.19               — semantic version, e.g. 2.5.0
-#    v2.5.19                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.21               — semantic version, e.g. 2.5.0
+#    v2.5.21                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Stable               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin               — formula name: pandev-cli-plugin[-beta]
-#    2d899fe8dd4677fd006e9981902ca7e1437188ecd0128bc650fc7ef9acf99618  — checksum of the Windows .zip asset
+#    2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1  — checksum of the Windows .zip asset
 #  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
 # =============================================================================
 set -e
 
-VERSION="2.5.19"
-TAG="v2.5.19"
+VERSION="2.5.21"
+TAG="v2.5.21"
 CHANNEL="Stable"
 FORMULA_NAME="pandev-cli-plugin"
 
@@ -47,7 +47,7 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="2d899fe8dd4677fd006e9981902ca7e1437188ecd0128bc650fc7ef9acf99618"
+WINDOWS_AMD64_SHA256="2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"
@@ -546,11 +546,12 @@ if [[ "$OS_NAME" == "Windows" ]]; then
     # can resolve them. `cygpath -w` is provided by Git Bash, MSYS2, and Cygwin.
     PS_SCRIPT_WIN=$(cygpath -w "$PS_SCRIPT_UNIX")
 
-    # Hand off to PowerShell. install-pandev.ps1 self-elevates via UAC,
-    # imports the MSIX signing cert into LocalMachine\TrustedPeople, and runs
-    # Add-AppxPackage. -NonInteractive skips the final "press any key" pause
-    # so the curl|bash flow terminates cleanly.
-    echo "Launching Windows installer (UAC prompt will appear)..."
+    # Hand off to PowerShell. install-pandev.ps1 checks the signature, carries
+    # an install signed by the old test certificate over to the new package and
+    # runs Add-AppxPackage - no administrator, the package is signed by PanDev's
+    # SSL.com certificate (PDM-5088). -NonInteractive skips the final "press
+    # any key" pause so the curl|bash flow terminates cleanly.
+    echo "Launching Windows installer..."
     if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_SCRIPT_WIN" -NonInteractive; then
         echo "ERROR: install-pandev.ps1 exited with a non-zero code." >&2
         exit 1

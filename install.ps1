@@ -16,8 +16,10 @@
       2. Verify SHA256 against the value baked in at publish time.
       3. Extract into a temp directory.
       4. Invoke install-pandev.ps1 from the extracted bundle. That script
-         self-elevates via UAC, imports the publisher cert into
-         LocalMachine\TrustedPeople, and runs Add-AppxPackage.
+         checks the signature, carries an install signed by the old test
+         certificate over to the new package, and runs Add-AppxPackage.
+         No administrator: releases are signed by PanDev's SSL.com
+         certificate (PDM-5088).
 
     Source-of-truth lives in pdm-source/release/install-experimental.ps1.
     Both release CI workflows render it on every release: the beta workflow
@@ -26,9 +28,9 @@
     the rendered copies - the install logic itself is channel-agnostic.
 
     Tokens replaced by the publish step (do NOT pre-fill them here):
-      2.5.19               - semantic version, e.g. 2.5.0
-      v2.5.19                   - release tag hosting the assets, e.g. v2.5.0-beta
-      2d899fe8dd4677fd006e9981902ca7e1437188ecd0128bc650fc7ef9acf99618  - checksum of the Windows .zip asset
+      2.5.21               - semantic version, e.g. 2.5.0
+      v2.5.21                   - release tag hosting the assets, e.g. v2.5.0-beta
+      2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1  - checksum of the Windows .zip asset
       pandev-metriks/pandev-cli                  - repo whose GitHub release hosts the .zip
       Stable               - display label: Beta or Stable
 
@@ -184,9 +186,12 @@ param(
         } else {
             Write-Note 'Documents folder is unknown - PowerShell profiles were not checked for hooks'
         }
+        # USERPROFILE, as in WindowsPaths.currentUserHome(): Windows PowerShell's
+        # $HOME is HOMEDRIVE+HOMEPATH, elsewhere on a machine with an AD home folder.
+        $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
         $hookFiles += @(
-            (Join-Path $HOME '.bashrc'),
-            (Join-Path $HOME '.bash_profile')
+            (Join-Path $userHome '.bashrc'),
+            (Join-Path $userHome '.bash_profile')
         )
         foreach ($file in $hookFiles) {
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
@@ -259,6 +264,9 @@ param(
                 Write-Removed 'Package removed (PanDev CLI Plugin)'
             }
         }
+        # A move to the new package that did not finish leaves the old LocalState here
+        # (install-pandev.ps1, PDM-5088): the token and queue go with the package.
+        Remove-OurPath (Join-Path $env:LOCALAPPDATA 'PandevMigration') 'Copy left by an unfinished update removed'
 
         if (-not $state.Reported) {
             Write-Host '  Nothing of PanDev was found for this account.'
@@ -286,9 +294,9 @@ param(
     }
 
     # Templated by CI. Publish step rewrites these literals on every release.
-    $VERSION = '2.5.19'
-    $TAG = 'v2.5.19'
-    $WINDOWS_AMD64_SHA256 = '2d899fe8dd4677fd006e9981902ca7e1437188ecd0128bc650fc7ef9acf99618'
+    $VERSION = '2.5.21'
+    $TAG = 'v2.5.21'
+    $WINDOWS_AMD64_SHA256 = '2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1'
 
     $REPO = 'pandev-metriks/pandev-cli'
     $ASSET_NAME = "pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
@@ -314,7 +322,7 @@ param(
 
     # Detect un-templated state by SHA *shape* (64 lowercase hex chars),
     # NOT by literal token equality. Earlier we compared against
-    # '2d899fe8dd4677fd006e9981902ca7e1437188ecd0128bc650fc7ef9acf99618', but the publish step's str.replace runs
+    # '2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1', but the publish step's str.replace runs
     # over THE WHOLE FILE - including the literal token inside this check
     # - so after templating the comparison became
     # "$WINDOWS_AMD64_SHA256 -eq <the actual hash>", which is always true,
@@ -357,30 +365,29 @@ param(
             throw "install-pandev.ps1 missing from $ASSET_NAME after extract."
         }
 
-        # Hand off in a SEPARATE powershell.exe process (not in this scope):
-        #   - install-pandev.ps1 self-elevates via UAC and calls `exit` on
-        #     finish; running in a separate process keeps that exit from
-        #     terminating either our scriptblock or the user's session.
-        #   - The child uses its own console window (no -NoNewWindow) so
-        #     the install log doesn't compete with the user's prompt and
-        #     the elevation flow is visually obvious.
+        # Hand off to a SEPARATE powershell.exe process (not this scope):
+        # install-pandev.ps1 calls `exit` on finish, and a separate process
+        # keeps that exit from terminating our scriptblock or the user's
+        # session. Nothing asks for elevation any more (PDM-5088), so the
+        # child shares this window: its log is the install log, read in
+        # place, and -NonInteractive drops its own "press any key".
+        #
+        # The call operator, not Start-Process -Wait: -Wait waits for every
+        # process the child starts, and moving an install off the test
+        # publisher runs `pandev activate`, which starts the watcher - the
+        # install would never return.
         Write-Host ""
-        Write-Host "Launching install-pandev.ps1 (UAC prompt will appear)..." -ForegroundColor Yellow
-        Write-Host ""
+        Write-Host "Installing the package..." -ForegroundColor Cyan
 
-        $childArgs = @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', "`"$installer`""
-        )
-        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $childArgs -Wait -PassThru
-        if ($proc.ExitCode -ne 0) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -NonInteractive
+        $installerCode = $LASTEXITCODE
+        if ($installerCode -ne 0) {
             # Don't throw - that would propagate via iex back to the user
             # session and (with their EAP) could close the terminal.
             # Print and return instead.
             Write-Host ""
-            Write-Host "ERROR: install-pandev.ps1 exited with code $($proc.ExitCode)." -ForegroundColor Red
-            Write-Host "       See the elevated PowerShell window for details." -ForegroundColor Red
+            Write-Host "ERROR: install-pandev.ps1 exited with code $installerCode." -ForegroundColor Red
+            Write-Host "       The reason is printed above." -ForegroundColor Red
             return
         }
 
@@ -504,21 +511,21 @@ param(
             Write-Host "Run: pandev login"
         }
     } elseif (-not $pkg) {
-        # The elevated window said "installed" and this one cannot see the
-        # package at all: it was registered for a DIFFERENT account. That is
-        # what happens when UAC is answered with somebody else's administrator
-        # credentials (PDM-4888) - MSIX packages are per-user, so the person at
-        # the keyboard gets nothing: no package, no alias, no 'pandev'.
-        # Advising the alias toggle here sends people looking for a switch that
-        # is not there, so say the real thing instead.
+        # The installer said "installed" and this session cannot see the
+        # package at all: it was registered for a DIFFERENT account. Nothing
+        # elevates any more (PDM-5088), so that takes an installer started
+        # from somebody else's administrator console (PDM-4888) - MSIX
+        # packages are per-user, and the person at the keyboard gets nothing.
+        # Advising the alias toggle here sends people looking for a switch
+        # that is not there, so say the real thing instead.
         Write-Host "The package is NOT registered for this account ($env:USERNAME)." -ForegroundColor Red
         Write-Host ""
-        Write-Host "  Windows installs MSIX packages per user. If the UAC prompt was answered"
-        Write-Host "  with an administrator's credentials rather than yours, the package went"
-        Write-Host "  to that administrator's account, not to yours."
+        Write-Host "  Windows installs MSIX packages per user. If this PowerShell runs as an"
+        Write-Host "  administrator account rather than yours, the package went to that"
+        Write-Host "  account, not to yours."
         Write-Host ""
-        Write-Host "  The certificate is trusted machine-wide now, so this needs no rights:"
-        Write-Host "  run this same command again as yourself - it will install without a UAC prompt."
+        Write-Host "  Run this same command again from an ordinary PowerShell, as yourself -"
+        Write-Host "  it needs no administrator rights."
     } else {
         # PATH is now fixed for future shells, but this one may still be stale,
         # or the appExecutionAlias didn't register / is toggled off.

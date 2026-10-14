@@ -158,13 +158,50 @@ jobs:
           #   каждым ГБ: под 320 МБ cost на 5 ГБ падал по OOM с пустым выводом, 1 ГБ кончается
           #   около 10 ГБ. Им четверть ОЗУ: потолок растёт с машиной, а Serial GC с FreeRatio
           #   держит кучу у живых данных, а не у потолка.
-          # Те же роли — у лаунчеров Windows (pom.xml, src/main/jpackage) и .deb; сторож —
-          # MemoryBudgetTest. Переопределяется снаружи целиком: PANDEV_JVM="-Xmx2g" pandev ...
-          case "${1:-}" in
-            --watcher|--mcp-server) PANDEV_HEAP="-Xmx320m" ;;
-            *) PANDEV_HEAP="-XX:MaxRAMPercentage=25" ;;
+          # - вотчеру и MCP ещё и начальная куча 16 МБ (PDM-5115): Serial не отдаёт память ниже
+          #   начальной, а по умолчанию она min(1/64 ОЗУ, потолок) — 256 МБ на 16 ГБ, и вотчер
+          #   после первой активности так и сидел на ~210 МБ RSS при ~15 МБ живых данных;
+          # - демону дашборда (PDM-5183) — начальная куча 128 МБ, -XX:-ShrinkHeapInSteps и запас
+          #   25 % после сборки мусора: он живёт сутками и после каждой сборки страницы делает
+          #   полную сборку мусора. С кучей по умолчанию она не сжималась ниже 1/64 ОЗУ (256 МБ на
+          #   16 ГБ, 512 на 32 ГБ), а Serial растягивал сжатие на четыре полные сборки подряд: демон
+          #   сидел на ~340–430 МБ RSS на 1.7 ГБ журналов и ~600–760 на 5 ГБ. Цена — куча заново
+          #   растёт под каждую сборку страницы: на 1.7 ГБ журналов пересборка страницы на 0–0.15 с
+          #   дольше, на 5 ГБ /rebuild и пересборка страницы на 0.15–0.3 с (+8–15 %), старт как раньше.
+          #   Запас 25 %, а не 10: полных сборок мусора в этом росте почти вдвое меньше (на 5 ГБ ~30
+          #   против ~55 за прогон, паузы — как у кучи по умолчанию). Пол 128 МБ, а не 16: с 16 МБ куча
+          #   росла бы с нуля, и пересборка страницы шла бы ещё на 0.4–0.8 с дольше;
+          # - на Linux вотчеру и демону — -XX:TrimNativeHeapInterval (PDM-5156, PDM-5183): glibc не
+          #   отдаёт системе освобождённую нативную память — у вотчера ~20 МБ после активности, у
+          #   демона 40–120 МБ после сборки страницы. Раз в минуту JVM возвращает её сама. Перед ним
+          #   -XX:+UnlockExperimentalVMOptions: до JDK 21.0.3 флаг экспериментальный, и без
+          #   разблокировки JVM не стартует. На macOS и Windows JVM так не умеет и с флагом печатает
+          #   предупреждение в stdout — там его нет;
+          # - -XX:-UsePerfData у всех ролей (PDM-5115): иначе JVM 20 раз в секунду обновляет
+          #   счётчики для jstat — 20 из 34 пробуждений вотчера в простое. jps процесс больше не
+          #   видит; jcmd <pid> и jstack работают, как работали.
+          # Роли вотчера и MCP — те же у лаунчеров Windows (src/main/jpackage) и .deb, у вотчера .deb
+          # и возврат памяти. Роли демона там нет: pandev.exe на Windows и главный лаунчер .deb одни
+          # на команды и демона. Сторож — MemoryBudgetTest; что JVM демона с этими флагами стартует,
+          # проверяет ci/smoke/daemon-start.sh на артефакте. Переопределяется снаружи целиком:
+          # PANDEV_JVM="-Xmx2g" pandev ...
+          case "${1:-} ${2:-}" in
+            "--watcher "*) PANDEV_ROLE=watcher ;;
+            "--mcp-server "*) PANDEV_ROLE=mcp ;;
+            "dashboard --serve") PANDEV_ROLE=daemon ;;
+            *) PANDEV_ROLE=command ;;
           esac
-          PANDEV_JVM="${PANDEV_JVM:--XX:+UseSerialGC $PANDEV_HEAP -XX:MaxMetaspaceSize=96m -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25}"
+          case "$PANDEV_ROLE" in
+            watcher|mcp) PANDEV_HEAP="-Xms16m -Xmx320m -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25" ;;
+            daemon) PANDEV_HEAP="-Xms128m -XX:MaxRAMPercentage=25 -XX:-ShrinkHeapInSteps -XX:MinHeapFreeRatio=25 -XX:MaxHeapFreeRatio=25" ;;
+            *) PANDEV_HEAP="-XX:MaxRAMPercentage=25 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25" ;;
+          esac
+          if [ "$PANDEV_ROLE" = watcher ] || [ "$PANDEV_ROLE" = daemon ]; then
+            if [ "$(uname -s)" = Linux ]; then
+              PANDEV_HEAP="$PANDEV_HEAP -XX:+UnlockExperimentalVMOptions -XX:TrimNativeHeapInterval=60000"
+            fi
+          fi
+          PANDEV_JVM="${PANDEV_JVM:--XX:+UseSerialGC $PANDEV_HEAP -XX:MaxMetaspaceSize=96m -XX:-UsePerfData}"
           # shellcheck disable=SC2086
           exec "$APP_HOME/runtime/bin/java" $PANDEV_JVM -jar "$APP_HOME/lib/pandev-myapp.jar" "$@"
           EOF
@@ -207,7 +244,11 @@ jobs:
       - name: Smoke-test artifact on its bundled runtime
         run: |
           mkdir smoke && tar -xzf "$ASSET" -C smoke
-          smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version
+          # Версия обязана быть в манифесте (PDM-5132): без Implementation-Version сборка считает себя
+          # сборкой из исходников и уходит на порты 4986–4995, а служба и открывашка ждут релиз на 4976.
+          VER_OUT=$(smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar --version)
+          echo "$VER_OUT"
+          echo "$VER_OUT" | grep -qF "v$VERSION" || { echo "::error::--version does not print v$VERSION: the jar carries no Implementation-Version"; exit 1; }
           # -Xshare:on падает, если архива CDS нет или он не подходит этой JVM:
           # молча потерянный архив вернул бы старт без него, и никто бы не заметил.
           smoke/runtime/bin/java -Xshare:on -jar smoke/lib/pandev-myapp.jar --version >/dev/null
@@ -224,6 +265,20 @@ jobs:
           done
           [ "$MISSING" -eq 0 ] && echo "Runtime smoke OK: binary runs, all $(echo "$REQ" | wc -l | tr -d ' ') required modules bundled."
           exit $MISSING
+
+      # Демон дашборда артефакта (PDM-5183): лаунчер даёт роли dashboard --serve свои флаги — начальную
+      # кучу, сжатие сразу, на Linux возврат нативной памяти. Юнит-тесты видят только текст лаунчера, а
+      # JVM с опечаткой во флагах не стартует вовсе: автостарт npx-канала перестал бы подниматься у всех.
+      # Поднимаем демона тем же лаунчером, что и шим автостарта, в отдельном доме, ждём /healthz, гасим.
+      - name: Smoke — dashboard daemon starts
+        run: sh ci/smoke/daemon-start.sh smoke/bin/pandev
+
+      # Вотчер в покое на синтетическом доме с большой историей (PDM-5126): проверки журналов Claude,
+      # запуски sqlite3 и git, чтения файлов, CPU и RSS — в бюджете. Вотчер тот, что уедет клиентам:
+      # лаунчер и рантайм этого артефакта. Локально — только в контейнере: вотчер смоука убил бы
+      # настоящий (общий /tmp/pandev_watcher.pid), поэтому при живом вотчере смоук не стартует.
+      - name: Smoke — watcher at rest
+        run: python3 ci/smoke/watcher-idle.py smoke/bin/pandev --watcher
 
       - uses: actions/upload-artifact@v4
         with:
@@ -306,8 +361,11 @@ jobs:
         shell: pwsh
         run: |
           $img = 'target\installer\pandev'
-          & "$img\pandev.exe" --version
+          $ver = (& "$img\pandev.exe" --version | Out-String)
           if ($LASTEXITCODE -ne 0) { Write-Error 'pandev.exe failed on the bundled runtime'; exit 1 }
+          Write-Host $ver
+          # Версия обязана быть в манифесте (PDM-5132): иначе сборка уходит на порты сборки из исходников.
+          if (-not $ver.Contains("v$env:VERSION")) { Write-Error "--version does not print v$env:VERSION: the jar carries no Implementation-Version"; exit 1 }
           $req = (& jdeps --ignore-missing-deps --print-module-deps target\pandev-myapp.jar).Trim() -split ','
           # The jpackage Windows runtime ships no java.exe (the launcher binds
           # jvm.dll directly) — read the module list from the jlink `release`
@@ -320,6 +378,11 @@ jobs:
             exit 1
           }
           Write-Host ("Runtime smoke OK: launcher runs, all " + $req.Count + " required modules bundled.")
+
+      # Вотчер в покое (PDM-5126): тот же смоук, что на POSIX, на лаунчере вотчера app-image.
+      - name: Smoke — watcher at rest
+        shell: pwsh
+        run: python ci/smoke/watcher-idle.py 'target\installer\pandev\pandev-watcher.exe'
 
       - name: Package zip
         shell: pwsh

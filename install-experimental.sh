@@ -14,17 +14,17 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.21               — semantic version, e.g. 2.5.0
-#    v2.5.21-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.22               — semantic version, e.g. 2.5.0
+#    v2.5.22-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#    3d2d2548ddea72925b7f607d6deac440a2291d3b3e41d47771b387c831ae19bf  — checksum of the Windows .zip asset
+#    54ab2a846e5fd4b01d46558c9ff0036da54f3132772989bca039a0e214f9ceff  — checksum of the Windows .zip asset
 #  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
 # =============================================================================
 set -e
 
-VERSION="2.5.21"
-TAG="v2.5.21-beta"
+VERSION="2.5.22"
+TAG="v2.5.22-beta"
 CHANNEL="Beta"
 FORMULA_NAME="pandev-cli-plugin-beta"
 
@@ -47,7 +47,7 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="3d2d2548ddea72925b7f607d6deac440a2291d3b3e41d47771b387c831ae19bf"
+WINDOWS_AMD64_SHA256="54ab2a846e5fd4b01d46558c9ff0036da54f3132772989bca039a0e214f9ceff"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"
@@ -174,25 +174,73 @@ pretty() {
 # This script removes the team edition and never takes the npx edition with it. These are the
 # names npx owns inside the two directories the products share.
 NPX_CONFIG_FILES="b2c-dashboard.sh b2c-dashboard-open.sh b2c-dashboard.cmd b2c-dashboard-open.cmd \
-b2c-dashboard.vbs b2c-dashboard-open.vbs b2c-dashboard.log b2c.firstrun autostart.off \
-dashboard.token budget.json budget.state.json cache zcode-workspace"
+b2c-dashboard.vbs b2c-dashboard-open.vbs b2c-dashboard.log b2c.firstrun b2c.present autostart.off \
+autostart.unavailable dashboard.token budget.json budget.state.json cache zcode-workspace gemini-no-tools.toml gemini-workspace opencode-workspace \
+codex-catalog.json codex-workspace claude-workspace"
 NPX_HOME_FILES="profile-cache.json profile-domains.json profile-portrait.json profile.html"
 
-# Any trace is enough: a service without its shim and a shim without its service both mean
-# "the npx edition lives here".
-npx_present() {
+# Any trace that the npx edition's own uninstall removes is enough: a service without its shim
+# and a shim without its service both mean "the npx edition lives here". Whoever never took the
+# autostart still has b2c.present, written by every npx run. npx's cache (~/.npm/_npx) is no
+# sign: any `npx pandev` creates it, `npx pandev uninstall` too, and npm never clears it.
+npx_traces_present() {
     for npx_mark in "$HOME/Library/LaunchAgents/io.pandev.b2c.dashboard.plist" \
                     "$HOME/Library/LaunchAgents/io.pandev.b2c.dashboard-open.plist" \
                     "$HOME/.config/systemd/user/pandev-b2c-dashboard.service" \
                     "$HOME/.config/systemd/user/pandev-b2c-dashboard-open.service" \
                     "$HOME/.config/pandev/b2c-dashboard.sh" \
                     "$HOME/.config/pandev/b2c.firstrun" \
+                    "$HOME/.config/pandev/b2c.present" \
                     "$HOME/.config/pandev/autostart.off"; do
         if [ -e "$npx_mark" ]; then
             return 0
         fi
     done
     return 1
+}
+
+# installed globally: only npm removes it
+npx_package_present() {
+    command -v npm >/dev/null 2>&1 && npm ls -g --depth=0 pandev >/dev/null 2>&1
+}
+
+# Names in folder $1 that are not part of the skeleton (arguments as remove_skeleton). A function,
+# not a loop inside $(...): bash 3.2 (/bin/bash on macOS) takes the ')' of a case pattern inside
+# $(...) for the end of the substitution, and the whole script stopped on a syntax error
+# (beta 2.5.22).
+skeleton_extras() {
+    ls -A "$1" 2>/dev/null | while IFS= read -r name; do
+        entry="$1/$name"
+        case " $2 " in
+            *" $name "*) if [ -d "$entry" ] && [ ! -L "$entry" ] && [ -z "$(ls -A "$entry" 2>/dev/null)" ]; then continue; fi ;;
+        esac
+        if [ -n "$3" ] && [ "$name" = "$3" ] && [ -f "$entry" ] && [ ! -L "$entry" ] && [ ! -s "$entry" ]; then continue; fi
+        echo "$name"
+    done
+}
+
+# A folder of another tool that older watchers created where there was none: ~/.claude made only
+# of empty debug/, projects/ and an empty history.jsonl, ~/.codex only of an empty sessions/. Gone
+# only when the whole folder is such a skeleton — a live Claude Code or Codex always has something
+# of its own there (settings.json, config.toml), and then nothing is touched.
+#   $1 the folder, $2 names of subfolders that may be there empty, $3 a file that may be there empty
+remove_skeleton() {
+    [ -d "$1" ] && [ ! -L "$1" ] || return 0
+    skeleton_extra=$(skeleton_extras "$1" "$2" "$3")
+    [ -z "$skeleton_extra" ] || return 0
+    if [ -n "$3" ] && [ -e "$1/$3" ]; then
+        # renamed first: a write that starts now goes to a new file, one that came in time is kept
+        mv "$1/$3" "$1/$3.pandev-removing" 2>/dev/null || return 0
+        if [ -s "$1/$3.pandev-removing" ]; then
+            mv -n "$1/$3.pandev-removing" "$1/$3" 2>/dev/null || true
+            return 0
+        fi
+        rm -f "$1/$3.pandev-removing"
+    fi
+    for skeleton_dir in $2; do
+        rmdir "$1/$skeleton_dir" 2>/dev/null || true
+    done
+    rmdir "$1" 2>/dev/null || true
 }
 
 # Deletes everything in a directory except the names in $3, then the directory if it is empty.
@@ -309,8 +357,13 @@ run_uninstall() {
 
     # The npx edition stays whatever we find: separate product, separate uninstall.
     npx_stays=0
-    if npx_present; then
+    npx_note="npx pandev stays — it is a separate product: remove it with  npx pandev uninstall"
+    if npx_traces_present; then
         npx_stays=1
+    elif npx_package_present; then
+        # only the global package: npx pandev uninstall would leave it, only npm removes it
+        npx_stays=1
+        npx_note="npx pandev stays — it is installed globally (npm i -g pandev): remove it with  npm uninstall -g pandev"
     fi
     had_service=0
     if [[ "$OS" == "Darwin" ]]; then
@@ -398,10 +451,9 @@ run_uninstall() {
         fi
     fi
 
+    # also when only its global package is here (npx_package_present)
     if [ "$npx_stays" = 1 ]; then
-        report_note "npx pandev stays — it is a separate product: remove it with  npx pandev uninstall"
-    elif command -v npm &>/dev/null && npm ls -g --depth=0 pandev >/dev/null 2>&1; then
-        report_note "The npx edition is installed globally (npm i -g pandev) — remove it with  npx pandev uninstall"
+        report_note "$npx_note"
     fi
 
     # A system daemon of an early macOS version; only root can remove it, and we do not sudo.
@@ -424,6 +476,10 @@ run_uninstall() {
             fi
         done
     fi
+    # Skeletons of other tools' folders that older watchers created where there were none
+    # (PDM-5182). Standard folders (~/.config, ~/.local/...) are not ours and stay, even empty.
+    remove_skeleton "$HOME/.claude" "debug projects" "history.jsonl"
+    remove_skeleton "$HOME/.codex" "sessions" ""
     hash -r 2>/dev/null || true
     if command -v pandev &>/dev/null; then
         found_pandev="$(command -v pandev)"

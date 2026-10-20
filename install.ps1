@@ -8,8 +8,8 @@
     `curl ... | bash` UX but speaks native PowerShell so users can
     copy-paste:
 
-      beta:   iwr -useb https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli-beta/main/install-experimental.ps1 | iex
-      stable: iwr -useb https://raw.githubusercontent.com/pandev-metriks/homebrew-pandev-cli/main/install.ps1 | iex
+      beta:   iwr -useb https://raw.githubusercontent.com/pandev-metriks/pandev-cli/main/install-experimental.ps1 | iex
+      stable: iwr -useb https://raw.githubusercontent.com/pandev-metriks/pandev-cli/main/install.ps1 | iex
 
     Steps:
       1. Download the Windows .zip release asset for the templated VERSION.
@@ -21,16 +21,17 @@
          No administrator: releases are signed by PanDev's SSL.com
          certificate (PDM-5088).
 
-    Source-of-truth lives in pdm-source/release/install-experimental.ps1.
-    Both release CI workflows render it on every release: the beta workflow
-    into the beta tap as install-experimental.ps1, the prod workflow into
-    the stable tap as install.ps1. Only the @-tokens below differ between
-    the rendered copies - the install logic itself is channel-agnostic.
+    Source-of-truth lives in release/install-experimental.ps1 of the GitLab
+    repository pandev-metrics-cli. Both release CI workflows render it on
+    every release into the public GitHub repository pandev-metriks/pandev-cli:
+    the beta workflow as install-experimental.ps1, the prod workflow as
+    install.ps1. Only the @-tokens below differ between the rendered
+    copies - the install logic itself is channel-agnostic.
 
     Tokens replaced by the publish step (do NOT pre-fill them here):
-      2.5.21               - semantic version, e.g. 2.5.0
-      v2.5.21                   - release tag hosting the assets, e.g. v2.5.0-beta
-      2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1  - checksum of the Windows .zip asset
+      2.5.22               - semantic version, e.g. 2.5.0
+      v2.5.22                   - release tag hosting the assets, e.g. v2.5.0-beta
+      59df9b4f4296bc5dfa1b427e01657ea885002d2395335ade185279374a0e1be6  - checksum of the Windows .zip asset
       pandev-metriks/pandev-cli                  - repo whose GitHub release hosts the .zip
       Stable               - display label: Beta or Stable
 
@@ -119,10 +120,24 @@ param(
             (Join-Path $startup 'pandev-dashboard-open.vbs'),
             (Join-Path $HOME '.config\pandev\b2c-dashboard.cmd'),
             (Join-Path $HOME '.config\pandev\b2c.firstrun'),
+            (Join-Path $HOME '.config\pandev\b2c.present'),
             (Join-Path $HOME '.config\pandev\autostart.off'),
             (Join-Path $npxCopy 'app')
         )
-        $npxStays = @($npxMarks | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count -gt 0
+        # Whoever never took the autostart still has b2c.present, written by every npx run. The
+        # global package counts too: only npm removes it. npx's cache (npm-cache\_npx) is no
+        # sign: any `npx pandev` creates it, `npx pandev uninstall` too, and npm never clears it.
+        # Through cmd: npm is npm.cmd, and its stderr must not turn into an error.
+        $npxPackage = $false
+        if (Get-Command npm -ErrorAction SilentlyContinue) {
+            $null = cmd.exe /c "npm ls -g --depth=0 pandev >nul 2>&1"
+            $npxPackage = ($LASTEXITCODE -eq 0)
+        }
+        $npxTraces = (@($npxMarks | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count -gt 0)
+        $npxStays = $npxPackage -or $npxTraces
+        # only the global package: npx pandev uninstall would leave it, only npm removes it
+        $npxNote = if ($npxTraces) { 'npx pandev stays - it is a separate product: remove it with  npx pandev uninstall' } `
+                   else { 'npx pandev stays - it is installed globally (npm i -g pandev): remove it with  npm uninstall -g pandev' }
 
         # 1. Everything of OURS that runs. The npx dashboard runs pandev.exe too - out of its
         #    private copy, with 'dashboard --serve' on the command line - and its restart loop
@@ -234,21 +249,12 @@ param(
         #    which is also where the npx edition lives. So they go only when it does not.
         #    ~/pandev-cost.html is an offline copy of the dashboard and holds prompt texts.
         if ($npxStays) {
-            Write-Note 'npx pandev stays - it is a separate product: remove it with  npx pandev uninstall'
+            Write-Note $npxNote
         } else {
             Remove-OurPath (Join-Path $HOME '.config\pandev') 'Dashboard settings and data removed'
             Remove-OurPath (Join-Path $HOME '.pandev') 'Local data removed (.pandev)'
             Remove-OurPath (Join-Path $HOME 'pandev-open.html') 'Dashboard jump page removed'
             Remove-OurPath (Join-Path $HOME 'pandev-cost.html') 'Dashboard page removed (pandev-cost.html)'
-            # The npm edition installed globally (npm i -g pandev) is a product of its own: it is
-            # named, never removed here. Through cmd: npm is npm.cmd, and its stderr must not
-            # turn into an error.
-            if (Get-Command npm -ErrorAction SilentlyContinue) {
-                $null = cmd.exe /c "npm ls -g --depth=0 pandev >nul 2>&1"
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Note 'The npx edition is installed globally (npm i -g pandev) - remove it with  npx pandev uninstall'
-                }
-            }
         }
 
         # 4. The package last: Windows deletes its LocalState (token, queue, logs) with it.
@@ -267,6 +273,45 @@ param(
         # A move to the new package that did not finish leaves the old LocalState here
         # (install-pandev.ps1, PDM-5088): the token and queue go with the package.
         Remove-OurPath (Join-Path $env:LOCALAPPDATA 'PandevMigration') 'Copy left by an unfinished update removed'
+
+        # Skeletons of other tools' folders that older watchers created where there were none
+        # (PDM-5182): gone only when the whole folder is such a skeleton - a live Claude Code or
+        # Codex always has something of its own there, and then nothing is touched.
+        function Remove-Skeleton {
+            param([string]$Root, [string[]]$EmptyDirs, [string]$EmptyFile)
+            if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return }
+            foreach ($e in @(Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue)) {
+                $emptyDir = ($EmptyDirs -contains $e.Name) -and $e.PSIsContainer -and
+                    (@(Get-ChildItem -LiteralPath $e.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0)
+                $emptyLog = $EmptyFile -and ($e.Name -eq $EmptyFile) -and (-not $e.PSIsContainer) -and ($e.Length -eq 0)
+                if (-not ($emptyDir -or $emptyLog)) { return }
+            }
+            if ($EmptyFile) {
+                $log = Join-Path $Root $EmptyFile
+                $aside = "$log.pandev-removing"
+                if (Test-Path -LiteralPath $log) {
+                    # renamed first: a write that starts now goes to a new file, one that came in time is kept
+                    try { Move-Item -LiteralPath $log -Destination $aside -ErrorAction Stop } catch { return }
+                    if ((Get-Item -LiteralPath $aside).Length -gt 0) {
+                        Move-Item -LiteralPath $aside -Destination $log -ErrorAction SilentlyContinue
+                        return
+                    }
+                    Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+                }
+            }
+            foreach ($d in $EmptyDirs) {
+                $p = Join-Path $Root $d
+                if ((Test-Path -LiteralPath $p -PathType Container) -and
+                        (@(Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue).Count -eq 0)) {
+                    Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                }
+            }
+            if (@(Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+                Remove-Item -LiteralPath $Root -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Remove-Skeleton -Root (Join-Path $HOME '.claude') -EmptyDirs @('debug', 'projects') -EmptyFile 'history.jsonl'
+        Remove-Skeleton -Root (Join-Path $HOME '.codex') -EmptyDirs @('sessions') -EmptyFile ''
 
         if (-not $state.Reported) {
             Write-Host '  Nothing of PanDev was found for this account.'
@@ -294,9 +339,9 @@ param(
     }
 
     # Templated by CI. Publish step rewrites these literals on every release.
-    $VERSION = '2.5.21'
-    $TAG = 'v2.5.21'
-    $WINDOWS_AMD64_SHA256 = '2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1'
+    $VERSION = '2.5.22'
+    $TAG = 'v2.5.22'
+    $WINDOWS_AMD64_SHA256 = '59df9b4f4296bc5dfa1b427e01657ea885002d2395335ade185279374a0e1be6'
 
     $REPO = 'pandev-metriks/pandev-cli'
     $ASSET_NAME = "pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
@@ -322,7 +367,7 @@ param(
 
     # Detect un-templated state by SHA *shape* (64 lowercase hex chars),
     # NOT by literal token equality. Earlier we compared against
-    # '2a9c9bf473e38da71bdfe38917aece2ea773faa81156d485f6ee8a0f5db183d1', but the publish step's str.replace runs
+    # '59df9b4f4296bc5dfa1b427e01657ea885002d2395335ade185279374a0e1be6', but the publish step's str.replace runs
     # over THE WHOLE FILE - including the literal token inside this check
     # - so after templating the comparison became
     # "$WINDOWS_AMD64_SHA256 -eq <the actual hash>", which is always true,
@@ -478,9 +523,19 @@ param(
     # login that means the watcher stays dead - and coding time goes
     # untracked - until the user happens to sign out and back in. When we can
     # see an existing login (token persisted in this package's LocalState), we
-    # launch it now via `pandev --watcher` so tracking resumes immediately. A
-    # brand-new (not-yet-logged-in) install needs nothing here: `pandev login`
-    # starts the watcher itself.
+    # start it now so tracking resumes immediately. A brand-new
+    # (not-yet-logged-in) install needs nothing here: `pandev login` starts the
+    # watcher itself.
+    #
+    # Through `pandev --start-watcher`, not `pandev --watcher` (PDM-5115): it
+    # starts pandev-watcher.exe exactly as `pandev login` does, with the
+    # watcher's own 320 MB heap ceiling - `pandev --watcher` ran the watcher
+    # inside pandev.exe with the commands' ceiling, a quarter of RAM, until the
+    # next sign-in. And only the watcher: a reinstall leaves the shell hooks and
+    # the execution policy alone, so a profile it cannot rewrite never keeps the
+    # watcher from starting. The call operator, not Start-Process: we wait for
+    # the answer (pandev.exe returns once the watcher runs) and say what
+    # happened - the watcher is its own process and is not waited for.
     # -----------------------------------------------------------------------
     $loggedIn = $false
     $pkg = $null
@@ -496,11 +551,18 @@ param(
     $pandevReady = [bool](Get-Command pandev -ErrorAction SilentlyContinue)
 
     if ($loggedIn -and $pandevReady) {
+        $watcherUp = $false
         try {
-            Start-Process -FilePath 'pandev' -ArgumentList '--watcher' -WindowStyle Hidden
-            Write-Host "Watcher started - your coding activity is being tracked now." -ForegroundColor Green
+            # No pipe: a captured stdout is a pipe the watcher would inherit, and
+            # this script would wait on it for as long as the watcher lives.
+            & pandev --start-watcher
+            $watcherUp = ($LASTEXITCODE -eq 0)
         } catch {
-            Write-Host "NOTE: could not start the watcher now ($($_.Exception.Message))." -ForegroundColor Yellow
+        }
+        if ($watcherUp) {
+            Write-Host "Watcher started - your coding activity is being tracked now." -ForegroundColor Green
+        } else {
+            Write-Host "NOTE: could not start the watcher now." -ForegroundColor Yellow
             Write-Host "      It will start automatically at your next sign-in." -ForegroundColor Yellow
         }
     }

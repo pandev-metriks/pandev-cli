@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
     steps:
       - name: Checkout source from GitLab
         shell: bash
@@ -73,7 +73,7 @@ jobs:
         include:
           - os: ubuntu-latest
             profile: linux
-          - os: macos-14
+          - os: macos-15
             profile: macos
           - os: macos-15-intel
             profile: macos

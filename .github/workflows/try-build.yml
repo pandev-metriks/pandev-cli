@@ -109,3 +109,41 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./ci/smoke/e2e-cost.ps1 java -jar target/pandev-myapp.jar
+
+  # Автообновление на Windows (PDM-5483): установленный пакет с работающим
+  # вотчером обновляется задачей Планировщика вне пакета, как у клиента. Сборка
+  # MSIX подписывается одноразовым сертификатом, вторая версия пакуется из того
+  # же app-image; GitHub поддельный — манифест подписан ключом теста.
+  msix-update:
+    name: MSIX update (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source from GitLab
+        shell: bash
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git clone --depth 100 --branch "$SRC_REF" "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPO}" .
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Build MSIX
+        shell: pwsh
+        run: mvn -q -ntp clean package -DskipTests -Pwindows-installer-msix
+
+      - name: Sign MSIX (throwaway certificate)
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'No MSIX produced by maven build.' }
+          ./build/windows-msix/sign-msix.ps1 -MsixPath $msix.FullName -SelfSigned
+
+      - name: Smoke — update a running install outside the package
+        shell: powershell
+        run: |
+          $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
+          ./ci/smoke/msix-update.ps1 -OldMsix $msix.FullName

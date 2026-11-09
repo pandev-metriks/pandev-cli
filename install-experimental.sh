@@ -14,19 +14,42 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.23               — semantic version, e.g. 2.5.0
-#    v2.5.23-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.24               — semantic version, e.g. 2.5.0
+#    v2.5.24-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#    e439cb6e3a8ebe2e9acc97192853ced5fae17400e6e374e9cc9fcf5a97612ef4  — checksum of the Windows .zip asset
-#  macOS/Linux SHAs are enforced by the Homebrew Formula at install time.
+#    826b811f5eb19a57180c54e1e1a11973a91184072a4313a3e78294ecca265512  — checksum of the Windows .zip asset
+#    13f8f6cc500b4b1c643f68e11ef4fdd18bec97856c99dc940cf9f26ac556c654 / 683b4dbef434d811335135e8a6f9741191455ea3d3150a592e7d2bd28b49dd05 / 44248e5c07218af60df15a6ccbd9b8981b1884f9dc9d29a379dcfede366b9b23
+#                            — checksums of the tar.gz assets (the same tokens the
+#                              Formula uses); the direct install and the Homebrew
+#                              pre-check verify the download against them (PDM-5479)
+#
+#  Usage:
+#    install.sh                 install or update from the release this copy names
+#    install.sh --from <dir>    install the direct (non-Homebrew) package from an
+#                               already unpacked and verified release archive; no
+#                               download (used by the updater, PDM-5478)
+#    install.sh --uninstall     remove PanDev of any version
+#
+#  Order of an update (PDM-5479): everything that can fail for outside reasons —
+#  download, checksum, unpacking, a test run of the new program — happens BEFORE
+#  the installed version is touched. If any of it fails, the installed version
+#  keeps running. If the new version cannot be activated, the previous one is put
+#  back and activated again.
 # =============================================================================
 set -e
 
-VERSION="2.5.23"
-TAG="v2.5.23-beta"
+VERSION="2.5.24"
+TAG="v2.5.24-beta"
 CHANNEL="Beta"
 FORMULA_NAME="pandev-cli-plugin-beta"
+
+# The channel as the receipt and the updater name it (install.json, PDM-5479).
+case "$CHANNEL" in
+    Stable) CHANNEL_ID="prod" ;;
+    Beta)   CHANNEL_ID="beta" ;;
+    *)      CHANNEL_ID="" ;;
+esac
 
 # All public artifacts (releases, formulas, installers) live in this repo.
 REPO="pandev-metriks/pandev-cli"
@@ -47,14 +70,45 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="e439cb6e3a8ebe2e9acc97192853ced5fae17400e6e374e9cc9fcf5a97612ef4"
+WINDOWS_AMD64_SHA256="826b811f5eb19a57180c54e1e1a11973a91184072a4313a3e78294ecca265512"
+
+# macOS/Linux: SHA256 of the tar.gz assets. The Formula verifies its own download, but the
+# direct install had no check at all (PDM-5479), and the Homebrew path now downloads the
+# archive once before anything is removed.
+LINUX_AMD64_SHA256="13f8f6cc500b4b1c643f68e11ef4fdd18bec97856c99dc940cf9f26ac556c654"
+MACOS_ARM64_SHA256="683b4dbef434d811335135e8a6f9741191455ea3d3150a592e7d2bd28b49dd05"
+MACOS_AMD64_SHA256="44248e5c07218af60df15a6ccbd9b8981b1884f9dc9d29a379dcfede366b9b23"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"
-for arg in "$@"; do
-    if [ "$arg" = "--uninstall" ]; then
-        MODE="uninstall"
-    fi
+FROM_DIR=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --uninstall) MODE="uninstall" ;;
+        --from)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "ERROR: --from needs the directory of an unpacked release archive."
+                exit 1
+            fi
+            FROM_DIR="$2"
+            shift
+            ;;
+        --from=*)
+            FROM_DIR="${1#--from=}"
+            if [ -z "$FROM_DIR" ]; then
+                echo "ERROR: --from needs the directory of an unpacked release archive."
+                exit 1
+            fi
+            ;;
+        *)
+            # An unknown option used to be ignored, and the script went on to a full network
+            # install — exactly what the caller did not ask for (PDM-5479).
+            echo "ERROR: unknown option: $1"
+            echo "Usage: install.sh [--from <unpacked release dir>] | install.sh --uninstall"
+            exit 1
+            ;;
+    esac
+    shift
 done
 
 # Where the watcher keeps its temp files. Overridable only so that tests leave the real ones alone.
@@ -125,8 +179,15 @@ stop_team_watcher() {
     pkill -u "$(id -u)" -f 'pandev-myapp\.jar --watcher' 2>/dev/null || true
 }
 
-# Both formulas, whatever tap they came from, and the taps themselves.
-remove_homebrew_install() {
+# PanDev changes nothing in Homebrew but its own formulas. Unasked, brew install and uninstall
+# would also update Homebrew and every tap, upgrade the outdated dependents of whatever they
+# upgraded, clean old versions of every formula once in 30 days and remove the dependencies
+# nothing needs any more (a git someone uses every day, pulled in by an older PanDev formula).
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
+    HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_AUTOREMOVE=1
+
+# Both formulas, whatever tap they came from.
+remove_homebrew_formulas() {
     command -v brew &>/dev/null || return 0
     brew unlink pandev-cli-plugin 2>/dev/null || true
     brew unlink pandev-cli-plugin-beta 2>/dev/null || true
@@ -136,12 +197,18 @@ remove_homebrew_install() {
     # untapped and leaves a stale keg that makes the reinstall below a no-op.
     brew uninstall --force pandev-cli-plugin 2>/dev/null || true
     brew uninstall --force pandev-cli-plugin-beta 2>/dev/null || true
+    brew cleanup pandev-cli-plugin 2>/dev/null || true
+    brew cleanup pandev-cli-plugin-beta 2>/dev/null || true
+}
+
+# Both formulas, whatever tap they came from, and the taps themselves.
+remove_homebrew_install() {
+    command -v brew &>/dev/null || return 0
+    remove_homebrew_formulas
     # Untap both the legacy taps and the current one (re-tapped below). The
     # legacy stable tap shares the pandev-metriks/pandev-cli short name.
     brew untap "$LEGACY_BETA_TAP" 2>/dev/null || true
     brew untap "$TAP" 2>/dev/null || true
-    brew cleanup pandev-cli-plugin 2>/dev/null || true
-    brew cleanup pandev-cli-plugin-beta 2>/dev/null || true
 }
 
 UNINSTALL_CLEAN=1
@@ -531,7 +598,8 @@ if [[ "$OS" == "Darwin" ]]; then
         sudo xcode-select --install
         echo ""
         echo "Please complete installation and re-run this script."
-        exit 0
+        # Not installed yet: a caller such as the updater must not take this for success.
+        exit 1
     fi
 fi
 
@@ -543,6 +611,10 @@ fi
 # Add-AppxPackage + the windows.startupTask manifest extension. Keep the
 # Windows path completely separate from the macOS/Linux flow below.
 if [[ "$OS_NAME" == "Windows" ]]; then
+    if [ -n "$FROM_DIR" ]; then
+        echo "ERROR: --from is for the macOS/Linux direct install; Windows installs the MSIX package."
+        exit 1
+    fi
     if ! command -v powershell.exe >/dev/null 2>&1; then
         echo "ERROR: powershell.exe not on PATH."
         echo "       Run this script from Git Bash, MSYS2, or Cygwin on a host"
@@ -608,7 +680,12 @@ if [[ "$OS_NAME" == "Windows" ]]; then
     # SSL.com certificate (PDM-5088). -NonInteractive skips the final "press
     # any key" pause so the curl|bash flow terminates cleanly.
     echo "Launching Windows installer..."
-    if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_SCRIPT_WIN" -NonInteractive; then
+    # The channel goes into the install receipt (LocalState\install.json, PDM-5479).
+    PS_ARGS=(-NoProfile -ExecutionPolicy Bypass -File "$PS_SCRIPT_WIN" -NonInteractive)
+    if [ -n "$CHANNEL_ID" ]; then
+        PS_ARGS+=(-Channel "$CHANNEL_ID")
+    fi
+    if ! powershell.exe "${PS_ARGS[@]}"; then
         echo "ERROR: install-pandev.ps1 exited with a non-zero code." >&2
         exit 1
     fi
@@ -623,36 +700,421 @@ if [[ "$OS_NAME" == "Windows" ]]; then
 fi
 
 # -------------------------------------------------------
-# 5. Remove any existing installation (all channels, all eras, brew + direct)
+# 5. Prepare the new program — nothing installed is touched yet (PDM-5479)
 # -------------------------------------------------------
-echo "Removing existing installation (if any)..."
+# The payload directories of the direct install. Every path that finds the program
+# (LauncherPath, the watcher.sh shim, the uninstallers) relies on exactly these under
+# ~/.pandev, so an update replaces them in place instead of moving the install elsewhere.
+PAYLOAD_DIRS="bin lib runtime scripts"
+STAGE_DIR="$INSTALL_DIR/.staging.$$"
+PREVIOUS_DIR="$INSTALL_DIR/.previous"
+RECEIPT="$INSTALL_DIR/install.json"
+LOCK_FILE="$INSTALL_DIR/.install.lock"
+
+# prepare → replacing → done. While "replacing", any exit — an error under set -e, a signal —
+# puts the previous version back (on_exit below): a half-finished update must never leave the
+# machine without a working program or without the service.
+PHASE="prepare"
+LOCK_HELD=0
+TMP_DIR=""
+# set by recover_interrupted_swap — the run that died had stopped its service: 1 = it put the
+# half-replaced previous version back, 2 = the install is whole and stays as it is
+RECOVERED=0
+# set when this run's swap found a program to move aside: a fresh install has nothing to go back to
+HAD_PREVIOUS=0
+# set when this run has started moving payloads: only then is .previous this run's own
+SWAP_STARTED=0
+# set when the new version refused --install: the rollback is expected, not a crash
+ROLLBACK_REASON=""
+
+# PanDev belongs to Homebrew here when one of our formulas is installed — not merely when brew
+# is on PATH: a direct install on a Mac that got Homebrew later is still a direct install.
+pandev_installed_by_brew() {
+    command -v brew &>/dev/null || return 1
+    brew list --formula 2>/dev/null </dev/null | grep -qE '^pandev-cli-plugin(-beta)?$'
+}
+
+USE_BREW=0
+if [ -n "$FROM_DIR" ]; then
+    if [[ "$OS" == "Darwin" ]] && pandev_installed_by_brew; then
+        echo "ERROR: --from installs the direct (non-Homebrew) package, and on this Mac PanDev"
+        echo "  is installed by Homebrew. Update it with: brew upgrade $FORMULA_NAME"
+        exit 1
+    fi
+elif [[ "$OS" == "Darwin" ]] && command -v brew &>/dev/null; then
+    USE_BREW=1
+fi
+
+# SHA256 of a file; GNU coreutils on Linux, shasum on macOS, openssl as a last resort.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    fi
+}
+
+# The checksum this copy of the installer was published with, for this platform.
+expected_sha256() {
+    case "$OS_NAME/$ARCH_NAME" in
+        Linux/amd64) echo "$LINUX_AMD64_SHA256" ;;
+        macOS/arm64) echo "$MACOS_ARM64_SHA256" ;;
+        macOS/amd64) echo "$MACOS_AMD64_SHA256" ;;
+        *) echo "" ;;
+    esac
+}
+
+# One installer at a time. Two of them used to wipe each other's staging and .previous — and
+# with them the only copy of the previous version. The lock is a symlink whose target is the pid:
+# created in one atomic step, so there is no moment when it exists without its owner.
+install_lock_owner_alive() {
+    lock_pid="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
+    [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null || return 1
+    # An install never takes two hours (the download alone may take one: curl --max-time 900,
+    # three retries). An older lock outlived its installer (SIGKILL, power loss) and the pid now
+    # belongs to some other process — after a reboot pids are reused.
+    [ -z "$(find "$LOCK_FILE" -maxdepth 0 -mmin +120 2>/dev/null)" ]
+}
+
+acquire_install_lock() {
+    mkdir -p "$INSTALL_DIR"
+    # `ln -s` into an existing directory does not fail: it puts the link inside and the lock looks
+    # taken. A directory here is never a lock (a development build of this installer made one), so
+    # it goes first; -n keeps a link that points at a directory from being followed the same way.
+    if [ -d "$LOCK_FILE" ] && [ ! -L "$LOCK_FILE" ]; then
+        rm -rf "$LOCK_FILE"
+    fi
+    if ! ln -sn "$$" "$LOCK_FILE" 2>/dev/null; then
+        if install_lock_owner_alive; then
+            echo "ERROR: another PanDev installer is running (PID $lock_pid, started less than"
+            echo "  2 hours ago). Nothing was changed."
+            exit 1
+        fi
+        # left by an installer that died
+        rm -f "$LOCK_FILE"
+        if ! ln -sn "$$" "$LOCK_FILE" 2>/dev/null; then
+            echo "ERROR: could not lock $INSTALL_DIR for the install. Nothing was changed."
+            exit 1
+        fi
+    fi
+    LOCK_HELD=1
+}
+
+# An installer killed half-way through the swap left part of the program in .previous. Put the
+# previous version back together before anything else: the swap below starts by clearing
+# .previous, and that was the only copy of it.
+recover_interrupted_swap() {
+    [ -e "$PREVIOUS_DIR/bin/pandev" ] || return 0
+    if [ -x "$INSTALL_DIR/bin/pandev" ] && [ -d "$INSTALL_DIR/lib" ] && [ -d "$INSTALL_DIR/runtime" ]; then
+        # The install is whole, but the run that left .previous died after its swap and before
+        # its activation finished (a finished one removes .previous at once) — with the service
+        # already stopped. The installed version stays: an older one is never put over a whole
+        # install. Whatever happens next, its service is started again.
+        echo "An earlier install was interrupted after it had stopped the service."
+        rm -rf "$PREVIOUS_DIR"
+        RECOVERED=2
+        return 0
+    fi
+    echo "An earlier install was interrupted: putting the previous version back first..."
+    for payload_dir in $PAYLOAD_DIRS; do
+        if [ -e "$PREVIOUS_DIR/$payload_dir" ]; then
+            rm -rf "$INSTALL_DIR/$payload_dir"
+            mv "$PREVIOUS_DIR/$payload_dir" "$INSTALL_DIR/$payload_dir"
+        fi
+    done
+    if [ -f "$PREVIOUS_DIR/install.json" ]; then
+        mv "$PREVIOUS_DIR/install.json" "$RECEIPT"
+    fi
+    rm -rf "$PREVIOUS_DIR"
+    # the run that died had already stopped the service: whatever happens next, start it again
+    RECOVERED=1
+}
+
+# Downloads the release archive of this platform into $TMP_DIR and verifies it. On any
+# failure it exits — before the installed version is touched.
+download_verified_asset() {
+    ASSET="pandev-cli-plugin_${VERSION}_${OS_NAME}_${ARCH_NAME}.tar.gz"
+    DOWNLOAD_URL="https://github.com/$REPO/releases/download/${TAG}/$ASSET"
+    EXPECTED_SHA="$(expected_sha256)"
+    # Shape, not equality with the token: the publish step replaces the token everywhere in
+    # this file, a comparison with it would be rewritten too (see the Windows check above).
+    if ! [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{64}$ ]]; then
+        echo "ERROR: this copy of the installer carries no checksum for $OS_NAME/$ARCH_NAME,"
+        echo "  so it cannot download v$VERSION safely. Nothing was changed."
+        echo "  Use the installer published with the release, or --from <unpacked archive>."
+        exit 1
+    fi
+    echo "Downloading $ASSET..."
+    if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 900 \
+            "$DOWNLOAD_URL" -o "$TMP_DIR/$ASSET"; then
+        echo "ERROR: the download failed. The installed version is not touched."
+        exit 1
+    fi
+    echo "Verifying checksum..."
+    ACTUAL_SHA="$(sha256_of "$TMP_DIR/$ASSET")"
+    if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+        echo "ERROR: SHA256 mismatch for $ASSET. The installed version is not touched."
+        echo "       expected: $EXPECTED_SHA"
+        echo "       actual:   $ACTUAL_SHA"
+        exit 1
+    fi
+}
+
+# Puts the new payload into $STAGE_DIR (from the download or from --from) and runs it once.
+stage_direct_payload() {
+    # leftovers of installers that were killed half-way (the lock says none is running now)
+    rm -rf "$INSTALL_DIR"/.staging.*
+    mkdir -p "$STAGE_DIR"
+    if [ -n "$FROM_DIR" ]; then
+        if [ ! -x "$FROM_DIR/bin/pandev" ] || [ ! -d "$FROM_DIR/lib" ] || [ ! -d "$FROM_DIR/runtime" ]; then
+            echo "ERROR: $FROM_DIR is not an unpacked PanDev release (no bin/pandev, lib/ or runtime/)."
+            echo "  Nothing was changed."
+            exit 1
+        fi
+        for payload_dir in $PAYLOAD_DIRS; do
+            if [ -e "$FROM_DIR/$payload_dir" ]; then
+                cp -pR "$FROM_DIR/$payload_dir" "$STAGE_DIR/"
+            fi
+        done
+    else
+        echo "Extracting..."
+        if ! tar -xzf "$TMP_DIR/$ASSET" -C "$STAGE_DIR"; then
+            echo "ERROR: the archive could not be unpacked. The installed version is not touched."
+            exit 1
+        fi
+    fi
+    chmod +x "$STAGE_DIR/bin/pandev" "$STAGE_DIR/bin/pandev-cli-plugin" 2>/dev/null || true
+    if [ ! -x "$STAGE_DIR/bin/pandev" ] || [ ! -d "$STAGE_DIR/lib" ] || [ ! -d "$STAGE_DIR/runtime" ]; then
+        echo "ERROR: the unpacked release has no bin/pandev, lib/ or runtime/. The installed version is not touched."
+        exit 1
+    fi
+    # The new program must start on its own runtime before it replaces the old one.
+    STAGED_VERSION="$("$STAGE_DIR/bin/pandev" --version 2>&1)" || {
+        echo "ERROR: the new program does not start:"
+        echo "$STAGED_VERSION" | tail -5
+        echo "  The installed version is not touched."
+        exit 1
+    }
+    # The whole version, not a prefix of it: v2.5.2 must not accept a program of v2.5.22.
+    STAGED_V="$(printf '%s\n' "$STAGED_VERSION" | grep -o 'v[0-9][0-9.]*' | head -1)"
+    if [[ "$VERSION" =~ ^[0-9] ]] && [ "$STAGED_V" != "v$VERSION" ]; then
+        echo "ERROR: the unpacked program is ${STAGED_V:-of an unknown version}, not v$VERSION."
+        echo "  The installed version is not touched."
+        exit 1
+    fi
+}
+
+# Swaps the staged payload in. The previous payload goes to $PREVIOUS_DIR so that a failed
+# activation can put it back; renames inside ~/.pandev are instant and never cross a disk.
+swap_in_staged_payload() {
+    SWAP_STARTED=1
+    if [ -e "$INSTALL_DIR/bin/pandev" ]; then
+        HAD_PREVIOUS=1
+    fi
+    rm -rf "$PREVIOUS_DIR"
+    mkdir -p "$PREVIOUS_DIR" || return 1
+    for payload_dir in $PAYLOAD_DIRS; do
+        if [ -e "$INSTALL_DIR/$payload_dir" ] || [ -L "$INSTALL_DIR/$payload_dir" ]; then
+            mv "$INSTALL_DIR/$payload_dir" "$PREVIOUS_DIR/$payload_dir" || return 1
+        fi
+    done
+    if [ -f "$RECEIPT" ]; then
+        mv "$RECEIPT" "$PREVIOUS_DIR/install.json" || return 1
+    fi
+    for payload_dir in $PAYLOAD_DIRS; do
+        if [ -e "$STAGE_DIR/$payload_dir" ]; then
+            mv "$STAGE_DIR/$payload_dir" "$INSTALL_DIR/$payload_dir" || return 1
+        fi
+    done
+    rmdir "$STAGE_DIR" 2>/dev/null || true
+    # Check, don't assume: the program must be where every launcher looks for it.
+    [ -x "$INSTALL_DIR/bin/pandev" ] && [ -d "$INSTALL_DIR/lib" ] && [ -d "$INSTALL_DIR/runtime" ]
+}
+
+# Undoes swap_in_staged_payload: the previous payload and receipt come back.
+restore_previous_payload() {
+    [ -d "$PREVIOUS_DIR" ] || return 1
+    [ -e "$PREVIOUS_DIR/bin/pandev" ] || return 1
+    for payload_dir in $PAYLOAD_DIRS; do
+        if [ -e "$PREVIOUS_DIR/$payload_dir" ]; then
+            rm -rf "$INSTALL_DIR/$payload_dir"
+            mv "$PREVIOUS_DIR/$payload_dir" "$INSTALL_DIR/$payload_dir" || return 1
+        fi
+    done
+    rm -f "$RECEIPT"
+    if [ -f "$PREVIOUS_DIR/install.json" ]; then
+        mv "$PREVIOUS_DIR/install.json" "$RECEIPT"
+    fi
+    rm -rf "$PREVIOUS_DIR"
+}
+
+# What was installed, by which channel — read by the updater (PDM-5478). Only when this copy
+# was published for a channel: an unrendered template names none.
+write_receipt() {
+    [ -n "$CHANNEL_ID" ] || return 0
+    printf '{"channel":"%s","kind":"direct","version":"%s","installed_at":"%s","installer":"install.sh"}\n' \
+        "$CHANNEL_ID" "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RECEIPT.tmp" \
+        && mv "$RECEIPT.tmp" "$RECEIPT"
+}
+
+# Our tap, when it is already the pandev-cli repo by URL: then it is refreshed in place and never
+# untapped — untapping would make `brew tap` below a network step after the old install is gone.
+our_tap_dir() {
+    tap_dir="$(brew --repository "$TAP" 2>/dev/null </dev/null || true)"
+    [ -n "$tap_dir" ] && [ -d "$tap_dir/.git" ] || return 1
+    # config, not `remote get-url`: the latter applies url.*.insteadOf (git@github.com: on many
+    # developer machines) and would never match the https address brew tapped
+    tap_remote="$(git -C "$tap_dir" config --get remote.origin.url 2>/dev/null </dev/null || true)"
+    [ "$tap_remote" = "$TAP_URL" ] || [ "$tap_remote" = "$TAP_URL.git" ] || return 1
+    printf '%s' "$tap_dir"
+}
+
+# Runs on every exit. While the installed version is being replaced, a stop of any kind puts
+# the previous version back and starts it again.
+on_exit() {
+    exit_status=$?
+    set +e
+    # The reader of this output may be gone (Ctrl-C in `curl | bash | tee` takes tee with it; the
+    # updater's pipe closes): the next echo would kill the installer by SIGPIPE half-way through
+    # the rollback. The first write that finds the pipe closed sends the rest to /dev/null.
+    trap 'exec >/dev/null 2>&1' PIPE
+    if [ "$PHASE" = "replacing" ] || { [ "$PHASE" = "prepare" ] && [ "$RECOVERED" != 0 ]; }; then
+        # Putting the previous version back takes seconds and must not be cut short. INT and HUP
+        # are ignored; TERM only sets a flag — an ignored TERM would be inherited by the watcher
+        # that --install starts, and `pkill` (stop_team_watcher) could never stop it again.
+        trap '' INT HUP
+        trap 'ROLLBACK_SIGNALLED=1' TERM
+        echo ""
+        if [ "$PHASE" = "prepare" ] && [ "$RECOVERED" = 1 ]; then
+            echo "ERROR: the installer stopped (exit $exit_status) after putting back the version an"
+            echo "  interrupted install had left half-replaced."
+        elif [ "$PHASE" = "prepare" ]; then
+            echo "ERROR: the installer stopped (exit $exit_status); an earlier install had stopped the"
+            echo "  service and never started it again."
+        elif [ -z "$ROLLBACK_REASON" ]; then
+            echo "ERROR: the installer stopped half-way (exit $exit_status)."
+        fi
+        if [ "$USE_BREW" = 0 ]; then
+            # Only this run's .previous: one left by an earlier run is older than what is installed.
+            if [ "$SWAP_STARTED" = 1 ] && restore_previous_payload; then
+                echo "  The previous version is put back."
+            fi
+            # The program in ~/.pandev is the previous one: put back above, or never moved when
+            # the stop came before the swap — or, on a fresh install, the new one, there being
+            # nothing to go back to. The service is down either way — start it again.
+            if [ "$SWAP_STARTED" = 1 ] && [ "$HAD_PREVIOUS" = 0 ]; then
+                started="  The new version is running, but the installer did not finish: start it again."
+                not_started="  PanDev could not be started."
+            else
+                started="  The previous version is running again; the update did not happen."
+                not_started="  The previous version could not be started either."
+            fi
+            if [ -x "$INSTALL_DIR/bin/pandev" ]; then
+                # The new version may have started a watcher of its own already.
+                stop_team_watcher
+                if "$INSTALL_DIR/bin/pandev" --install; then
+                    echo "$started"
+                else
+                    echo "$not_started"
+                    echo "  Fix the cause, then run: $INSTALL_DIR/bin/pandev --install"
+                fi
+            else
+                echo "  Start this installer again."
+            fi
+        else
+            echo "  Homebrew did not finish installing $FORMULA. Start this installer again,"
+            echo "  or run: brew install $FORMULA && pandev --install"
+        fi
+        if [ "$exit_status" = 0 ]; then
+            exit_status=1
+        fi
+    fi
+    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+    rm -rf "$STAGE_DIR"
+    if [ "$LOCK_HELD" = 1 ] && [ "$(readlink "$LOCK_FILE" 2>/dev/null)" = "$$" ]; then
+        # A fresh install leaves an empty .previous behind when its activation fails. Under our
+        # own lock only: an installer the lock turned away must not touch the running one's.
+        rmdir "$PREVIOUS_DIR" 2>/dev/null || true
+        rm -f "$LOCK_FILE"
+        # a Homebrew install has nothing else there: the lock alone made the directory
+        rmdir "$INSTALL_DIR" 2>/dev/null || true
+    fi
+    exit "$exit_status"
+}
+trap on_exit EXIT
+# Signals end the script through the EXIT trap above, so a killed installer still rolls back.
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+# Without a trap SIGPIPE kills bash outright — bash 3.2 does not even run the EXIT trap then.
+trap 'exit 141' PIPE
+
+acquire_install_lock
+TMP_DIR=$(mktemp -d)
+
+BREW_TAP_DIR=""
+if [ "$USE_BREW" = 1 ]; then
+    # Homebrew downloads the archive itself, but only after the old install is gone — a
+    # network failure there used to leave the Mac without PanDev. Download it here first:
+    # a failure stops the installer with nothing changed, and the verified file is handed
+    # to Homebrew's cache below, so brew install needs no second download.
+    download_verified_asset
+    # Our tap already in place: refresh it now, while the old install still runs. A failed
+    # refresh only means the full re-tap below.
+    if BREW_TAP_DIR="$(our_tap_dir)"; then
+        if ! git -C "$BREW_TAP_DIR" pull --ff-only -q </dev/null; then
+            BREW_TAP_DIR=""
+        fi
+    else
+        BREW_TAP_DIR=""
+    fi
+else
+    recover_interrupted_swap
+    if [ -z "$FROM_DIR" ]; then
+        download_verified_asset
+    fi
+    stage_direct_payload
+fi
+
+# -------------------------------------------------------
+# 6. Replace the installed version (all channels, all eras, brew + direct)
+# -------------------------------------------------------
+echo "Replacing the installed version (if any)..."
+PHASE="replacing"
 
 # Stop the running watcher first. The program goes right below, and a failed install used to
 # leave the old LaunchAgent / unit behind, restarting a watcher whose program was gone, while
 # the already running one kept sending until reboot (PDM-4862). `pandev --install` at the end
 # registers the service again; credentials in ~/.config/pandev are not touched.
 stop_team_watcher
-remove_homebrew_install
+if [ -n "$BREW_TAP_DIR" ]; then
+    # Our tap stays: only the formulas go, and the legacy beta tap.
+    remove_homebrew_formulas
+    brew untap "$LEGACY_BETA_TAP" 2>/dev/null || true
+else
+    remove_homebrew_install
+fi
 
-# Remove a previous direct-install: drop only the unpacked app payload and the
-# bin symlinks. Credentials/config live alongside the payload under ~/.pandev
-# (e.g. ~/.pandev/credentials) — do NOT wipe the whole dir, or every reinstall
-# logs the user out. Deleting just the payload dirs keeps the login intact.
-rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/lib" "$INSTALL_DIR/runtime" "$INSTALL_DIR/scripts"
-rm -f "$BIN_LINK" "$BIN_DIR/pandev-cli-plugin"
-
-echo "Cleanup complete."
-
-# -------------------------------------------------------
-# 6. Install (Homebrew on macOS, direct GitHub release otherwise)
-# -------------------------------------------------------
-if [[ "$OS" == "Darwin" ]] && command -v brew &>/dev/null; then
+if [ "$USE_BREW" = 1 ]; then
+    # Brew replaces the direct install: drop only its payload, receipt and the bin symlinks.
+    # Credentials/config live alongside the payload under ~/.pandev (e.g. ~/.pandev/credentials)
+    # — do NOT wipe the whole dir, or every reinstall logs the user out.
+    for payload_dir in $PAYLOAD_DIRS; do
+        rm -rf "$INSTALL_DIR/$payload_dir"
+    done
+    rm -rf "$RECEIPT" "$PREVIOUS_DIR"
+    rm -f "$BIN_LINK" "$BIN_DIR/pandev-cli-plugin"
     echo "Homebrew detected: $(brew --version | head -1)"
-    # The tap is the pandev-cli repo itself, addressed by explicit URL (the
-    # repo intentionally has no homebrew- prefix). The short tap name stays
-    # pandev-metriks/pandev-cli — the same name clients have always had.
-    echo "Tapping $TAP from $TAP_URL..."
-    brew tap "$TAP" "$TAP_URL" </dev/null
+    if [ -z "$BREW_TAP_DIR" ]; then
+        # The tap is the pandev-cli repo itself, addressed by explicit URL (the
+        # repo intentionally has no homebrew- prefix). The short tap name stays
+        # pandev-metriks/pandev-cli — the same name clients have always had.
+        # Without our tap in place (a first install, or the legacy tap of the same short name)
+        # this is the one network step left after the old install is gone.
+        echo "Tapping $TAP from $TAP_URL..."
+        brew tap "$TAP" "$TAP_URL" </dev/null
+    fi
     # Homebrew 6.0+ refuses formulas from a tap nobody has trusted (PDM-4862). Running this
     # installer is asking for exactly this formula, so trust that one formula — not the whole
     # tap, as Homebrew recommends. Older brew has no `trust` command: nothing to do there.
@@ -660,41 +1122,45 @@ if [[ "$OS" == "Darwin" ]] && command -v brew &>/dev/null; then
         brew trust --formula "$FORMULA" </dev/null \
             || echo "WARNING: could not mark $FORMULA as trusted; Homebrew may refuse to install it."
     fi
+    # The archive verified above goes where Homebrew looks for its download: brew checks it
+    # against the Formula's sha256 and installs without fetching it again. If the cache path
+    # cannot be told, brew simply downloads the archive itself.
+    BREW_CACHE_FILE="$(brew --cache --formula "$FORMULA" 2>/dev/null </dev/null || true)"
+    if [ -n "$BREW_CACHE_FILE" ]; then
+        mkdir -p "$(dirname "$BREW_CACHE_FILE")" 2>/dev/null \
+            && cp "$TMP_DIR/$ASSET" "$BREW_CACHE_FILE" 2>/dev/null || true
+    fi
     echo "Installing via Homebrew..."
     # Redirect stdin from /dev/null so brew install can't consume bytes from
     # the script itself when invoked via `curl ... | bash` (which would make
     # bash hit EOF early and silently skip the post-install steps).
-    if ! brew install "$FORMULA" </dev/null; then
+    # No auto-update (HOMEBREW_NO_AUTO_UPDATE above): our tap is fresh — refreshed before the
+    # stop or tapped just now — and the formula has no dependencies to look up.
+    brew_installed=0
+    brew install "$FORMULA" </dev/null && brew_installed=1
+    if [ "$brew_installed" = 0 ]; then
         echo ""
         echo "ERROR: Homebrew could not install $FORMULA (see the message above)."
         echo "  If it says the tap or a formula is not trusted, run:"
         echo "    brew trust --formula $FORMULA"
         echo "  and start this installer again."
+        PHASE="done"
         exit 1
     fi
 else
     echo "Using direct GitHub release installation."
     echo "Version: $VERSION"
-
-    ASSET="pandev-cli-plugin_${VERSION}_${OS_NAME}_${ARCH_NAME}.tar.gz"
-    DOWNLOAD_URL="https://github.com/$REPO/releases/download/${TAG}/$ASSET"
-
-    TMP_DIR=$(mktemp -d)
-    trap 'rm -rf "$TMP_DIR"' EXIT
-
-    echo "Downloading $ASSET..."
-    curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ASSET"
-
-    echo "Extracting..."
-    mkdir -p "$INSTALL_DIR"
-    tar -xzf "$TMP_DIR/$ASSET" -C "$INSTALL_DIR"
-
-    chmod +x "$INSTALL_DIR/bin/pandev" "$INSTALL_DIR/bin/pandev-cli-plugin"
-
-    mkdir -p "$BIN_DIR"
-
-    ln -sf "$INSTALL_DIR/bin/pandev" "$BIN_LINK"
-    ln -sf "$INSTALL_DIR/bin/pandev-cli-plugin" "$BIN_DIR/pandev-cli-plugin"
+    if ! swap_in_staged_payload; then
+        echo "ERROR: could not move the new program into $INSTALL_DIR."
+        exit 1
+    fi
+    # Not critical: without the receipt the updater asks for the channel, without the link
+    # the program still runs from ~/.pandev/bin — neither may cost the update itself.
+    write_receipt || echo "WARNING: could not write the install receipt ($RECEIPT)."
+    { mkdir -p "$BIN_DIR" \
+        && ln -sf "$INSTALL_DIR/bin/pandev" "$BIN_LINK" \
+        && ln -sf "$INSTALL_DIR/bin/pandev-cli-plugin" "$BIN_DIR/pandev-cli-plugin"; } \
+        || echo "WARNING: could not create the command links in $BIN_DIR; the program is $INSTALL_DIR/bin/pandev."
 fi
 
 # -------------------------------------------------------
@@ -719,15 +1185,16 @@ PROFILE_FILE=$(detect_profile)
 
 add_path_if_missing() {
     if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$PROFILE_FILE" 2>/dev/null; then
-        echo "" >> "$PROFILE_FILE"
-        echo "# pandev-cli" >> "$PROFILE_FILE"
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$PROFILE_FILE"
+        { echo ""; echo "# pandev-cli"; echo 'export PATH="$HOME/.local/bin:$PATH"'; } \
+            >> "$PROFILE_FILE" 2>/dev/null || return 1
         echo "Added ~/.local/bin to PATH in $PROFILE_FILE"
     fi
 }
 
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    add_path_if_missing
+    # Not critical either: a profile that is not ours to write (home-manager, a read-only
+    # dotfile) must not cost the update.
+    add_path_if_missing || echo "WARNING: could not add ~/.local/bin to PATH in $PROFILE_FILE; add it yourself."
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
@@ -746,37 +1213,53 @@ if command -v brew &>/dev/null; then
 fi
 hash -r 2>/dev/null || true
 
-# Locate pandev binary (PATH first, then brew prefix, then direct-install symlink)
+# The program this installer has just put in place — not whatever `pandev` comes first on PATH:
+# a global npm `pandev` (the npx edition) earlier on PATH refuses --install, and the update
+# would be rolled back every time.
 PANDEV_BIN=""
-if command -v pandev &>/dev/null; then
-    PANDEV_BIN=$(command -v pandev)
-elif command -v brew &>/dev/null; then
-    BREW_PREFIX_BIN="$(brew --prefix 2>/dev/null)/bin/pandev"
-    [ -x "$BREW_PREFIX_BIN" ] && PANDEV_BIN="$BREW_PREFIX_BIN"
-fi
-if [ -z "$PANDEV_BIN" ] && [ -x "$BIN_LINK" ]; then
-    PANDEV_BIN="$BIN_LINK"
+if [ "$USE_BREW" = 0 ]; then
+    PANDEV_BIN="$INSTALL_DIR/bin/pandev"
+else
+    if command -v brew &>/dev/null; then
+        BREW_PREFIX_BIN="$(brew --prefix 2>/dev/null)/bin/pandev"
+        [ -x "$BREW_PREFIX_BIN" ] && PANDEV_BIN="$BREW_PREFIX_BIN"
+    fi
+    if [ -z "$PANDEV_BIN" ] && command -v pandev &>/dev/null; then
+        PANDEV_BIN=$(command -v pandev)
+    fi
 fi
 
-if [ -n "$PANDEV_BIN" ]; then
-    echo "Activating watchers via '$PANDEV_BIN --install'..."
-    # Провал активации — это провал установки: программа лежит, а вотчер не запущен и
-    # данные не собираются. Раньше скрипт печатал предупреждение и тут же объявлял
-    # готовность с кодом 0, и `curl | bash` выглядел успешным.
-    if "$PANDEV_BIN" --install; then
-        echo ""
-        echo "pandev is ready to use."
-        echo "Try: pandev --version"
-    else
-        echo ""
-        echo "ERROR: '$PANDEV_BIN --install' failed - the watcher is NOT running."
-        echo "  The program itself is installed. Fix the cause, then run: $PANDEV_BIN --install"
-        echo "  Details: $HOME/.local/share/pandev/logs/cli-error.log"
-        exit 1
-    fi
-else
-    echo "WARNING: pandev binary not found after install."
+if [ -z "$PANDEV_BIN" ] || [ ! -x "$PANDEV_BIN" ]; then
+    PHASE="done"
+    echo "ERROR: the pandev program is not found after the install, so the watcher could not be started."
     echo "Restart your terminal and run: pandev --install"
+    exit 1
+fi
+
+echo "Activating watchers via '$PANDEV_BIN --install'..."
+# Провал активации — это провал установки: программа лежит, а вотчер не запущен и
+# данные не собираются. Раньше скрипт печатал предупреждение и тут же объявлял
+# готовность с кодом 0, и `curl | bash` выглядел успешным.
+if "$PANDEV_BIN" --install; then
+    # The new version runs: the previous payload is no longer needed.
+    PHASE="done"
+    rm -rf "$PREVIOUS_DIR"
+    echo ""
+    echo "pandev is ready to use."
+    echo "Try: pandev --version"
+else
+    echo ""
+    echo "ERROR: '$PANDEV_BIN --install' failed - the watcher is NOT running."
+    ROLLBACK_REASON="activation"
+    # A direct update keeps the previous version until the new one is activated: on_exit puts
+    # it back and starts it again, so a broken release does not leave the machine without data
+    # collection (PDM-5479). A fresh install and Homebrew have nothing to go back to.
+    if [ "$USE_BREW" = 1 ] || [ ! -e "$PREVIOUS_DIR/bin/pandev" ]; then
+        PHASE="done"
+        echo "  The program itself is installed. Fix the cause, then run: $PANDEV_BIN --install"
+    fi
+    echo "  Details: $HOME/.local/share/pandev/logs/cli-error.log"
+    exit 1
 fi
 
 echo ""

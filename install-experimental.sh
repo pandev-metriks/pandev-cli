@@ -14,12 +14,12 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.24               — semantic version, e.g. 2.5.0
-#    v2.5.24-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.25               — semantic version, e.g. 2.5.0
+#    v2.5.25-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#    826b811f5eb19a57180c54e1e1a11973a91184072a4313a3e78294ecca265512  — checksum of the Windows .zip asset
-#    13f8f6cc500b4b1c643f68e11ef4fdd18bec97856c99dc940cf9f26ac556c654 / 683b4dbef434d811335135e8a6f9741191455ea3d3150a592e7d2bd28b49dd05 / 44248e5c07218af60df15a6ccbd9b8981b1884f9dc9d29a379dcfede366b9b23
+#    7d22c8b1922e5c47a7ff91a313001b1c91ca4f1c8cac7145c5a5c1d449a9740c  — checksum of the Windows .zip asset
+#    e2f81019096165d135f644251a0e132dfc6c75f9335a7938dbb7974bb1d42ec3 / c875172e0bb1392ff35e0e106990d55859d563a05d5ad1894406e1c1548be007 / 95ffac68b997471375ede57b9598557c1ae572e9a14507e3b8aceb5f172b1781
 #                            — checksums of the tar.gz assets (the same tokens the
 #                              Formula uses); the direct install and the Homebrew
 #                              pre-check verify the download against them (PDM-5479)
@@ -39,8 +39,8 @@
 # =============================================================================
 set -e
 
-VERSION="2.5.24"
-TAG="v2.5.24-beta"
+VERSION="2.5.25"
+TAG="v2.5.25-beta"
 CHANNEL="Beta"
 FORMULA_NAME="pandev-cli-plugin-beta"
 
@@ -70,14 +70,14 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="826b811f5eb19a57180c54e1e1a11973a91184072a4313a3e78294ecca265512"
+WINDOWS_AMD64_SHA256="7d22c8b1922e5c47a7ff91a313001b1c91ca4f1c8cac7145c5a5c1d449a9740c"
 
 # macOS/Linux: SHA256 of the tar.gz assets. The Formula verifies its own download, but the
 # direct install had no check at all (PDM-5479), and the Homebrew path now downloads the
 # archive once before anything is removed.
-LINUX_AMD64_SHA256="13f8f6cc500b4b1c643f68e11ef4fdd18bec97856c99dc940cf9f26ac556c654"
-MACOS_ARM64_SHA256="683b4dbef434d811335135e8a6f9741191455ea3d3150a592e7d2bd28b49dd05"
-MACOS_AMD64_SHA256="44248e5c07218af60df15a6ccbd9b8981b1884f9dc9d29a379dcfede366b9b23"
+LINUX_AMD64_SHA256="e2f81019096165d135f644251a0e132dfc6c75f9335a7938dbb7974bb1d42ec3"
+MACOS_ARM64_SHA256="c875172e0bb1392ff35e0e106990d55859d563a05d5ad1894406e1c1548be007"
+MACOS_AMD64_SHA256="95ffac68b997471375ede57b9598557c1ae572e9a14507e3b8aceb5f172b1781"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"
@@ -355,6 +355,33 @@ team_pids() {
     done
 }
 
+# The automatic update runs outside the service (PDM-5482): a transient systemd unit, its own session
+# where there is no systemd, a one-shot launchd job. One that is installing right now is let finish:
+# stopped half-way, its installer would roll back and start the service again after this removal.
+update_pids() {
+    pgrep -u "$uid" -f 'pandev-myapp\.jar update --unattended' 2>/dev/null | tr '\n' ' '
+}
+
+stop_automatic_update() {
+    local i=0
+    if [ -n "$(update_pids)" ]; then
+        echo "An automatic update of PanDev is running: waiting for it to finish (up to 3 min)..."
+        while [ "$i" -lt 180 ] && [ -n "$(update_pids)" ]; do
+            sleep 1
+            i=$((i + 1))
+        done
+    fi
+    if [[ "$OS" == "Darwin" ]]; then
+        launchctl bootout "gui/$uid/io.pandev.update" 2>/dev/null || true
+    elif command -v systemctl &>/dev/null; then
+        systemctl --user stop 'pandev-update-*.service' 2>/dev/null || true
+    fi
+    if [ -n "$(update_pids)" ]; then
+        report_fail "An automatic update of PanDev is still running and may put PanDev back" \
+            "Wait a few minutes and run the uninstall again"
+    fi
+}
+
 # Deletes a file or a directory tree; reports it only if it was there.
 remove_path() {
     if [ -e "$1" ] || [ -L "$1" ]; then
@@ -444,6 +471,9 @@ run_uninstall() {
     if [ -n "$(team_pids)" ]; then
         had_processes=1
     fi
+
+    # 0. An automatic update in progress, before the service: its installer would start it again.
+    stop_automatic_update
 
     # 1. The service first, so that nothing restarts what is stopped below.
     stop_team_watcher

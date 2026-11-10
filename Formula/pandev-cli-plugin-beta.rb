@@ -9,13 +9,13 @@
 # beta of the same version — hence no immutability assumptions here.
 #
 # Tokens replaced by CI (do NOT pre-fill):
-#   2.5.24           semantic version, e.g. 2.5.0
-#   v2.5.24-beta               release tag hosting the assets, e.g. v2.5.0-beta
-#   44248e5c07218af60df15a6ccbd9b8981b1884f9dc9d29a379dcfede366b9b23 / 683b4dbef434d811335135e8a6f9741191455ea3d3150a592e7d2bd28b49dd05 / 13f8f6cc500b4b1c643f68e11ef4fdd18bec97856c99dc940cf9f26ac556c654  asset checksums
+#   2.5.25           semantic version, e.g. 2.5.0
+#   v2.5.25-beta               release tag hosting the assets, e.g. v2.5.0-beta
+#   95ffac68b997471375ede57b9598557c1ae572e9a14507e3b8aceb5f172b1781 / c875172e0bb1392ff35e0e106990d55859d563a05d5ad1894406e1c1548be007 / e2f81019096165d135f644251a0e132dfc6c75f9335a7938dbb7974bb1d42ec3  asset checksums
 class PandevCliPluginBeta < Formula
   desc "PanDev Metrics CLI (beta channel)"
   homepage "https://github.com/pandev-metriks/pandev-cli"
-  version "2.5.24"
+  version "2.5.25"
 
   # No dependencies, on purpose. Homebrew upgrades every outdated dependency of a formula it
   # installs (a dependency counts as installed only at its latest version) and then their
@@ -25,17 +25,17 @@ class PandevCliPluginBeta < Formula
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.24-beta/pandev-cli-plugin_2.5.24_macOS_amd64.tar.gz"
-      sha256 "44248e5c07218af60df15a6ccbd9b8981b1884f9dc9d29a379dcfede366b9b23"
+      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.25-beta/pandev-cli-plugin_2.5.25_macOS_amd64.tar.gz"
+      sha256 "95ffac68b997471375ede57b9598557c1ae572e9a14507e3b8aceb5f172b1781"
     else
-      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.24-beta/pandev-cli-plugin_2.5.24_macOS_arm64.tar.gz"
-      sha256 "683b4dbef434d811335135e8a6f9741191455ea3d3150a592e7d2bd28b49dd05"
+      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.25-beta/pandev-cli-plugin_2.5.25_macOS_arm64.tar.gz"
+      sha256 "c875172e0bb1392ff35e0e106990d55859d563a05d5ad1894406e1c1548be007"
     end
   end
 
   on_linux do
-    url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.24-beta/pandev-cli-plugin_2.5.24_Linux_amd64.tar.gz"
-    sha256 "13f8f6cc500b4b1c643f68e11ef4fdd18bec97856c99dc940cf9f26ac556c654"
+    url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.25-beta/pandev-cli-plugin_2.5.25_Linux_amd64.tar.gz"
+    sha256 "e2f81019096165d135f644251a0e132dfc6c75f9335a7938dbb7974bb1d42ec3"
   end
 
   # No `conflicts_with "pandev-cli-plugin"`: to check it, brew loads the stable formula, and

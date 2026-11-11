@@ -1,47 +1,47 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "2.5.27",
-  "tag": "v2.5.27-beta",
-  "commit": "34d9bc316392243c06e95156b4858e70fdc8c4b4",
-  "issued_at": "2026-11-11T08:48:25Z",
-  "expires_at": "2026-11-25T08:48:25Z",
+  "version": "2.5.28",
+  "tag": "v2.5.28-beta",
+  "commit": "4480721572855cd61a03d3c84b79b52ad8b14a09",
+  "issued_at": "2026-11-11T11:12:44Z",
+  "expires_at": "2026-11-25T11:12:44Z",
   "paused": false,
   "revoked": [],
   "assets": {
-    "pandev-cli-plugin_2.5.27_Linux_amd64.tar.gz": {
-      "sha256": "fcb98c22ea73a832186b5be38badadbdcac783ea3bc72d43161b5e119590816b",
-      "size": 58317866
+    "pandev-cli-plugin_2.5.28_Linux_amd64.tar.gz": {
+      "sha256": "53e9a73159ed7b8546d57982e7cc1dde5b6a048702d2ff3dd2f349fb43c45602",
+      "size": 58317802
     },
-    "pandev-cli-plugin_2.5.27_Windows_amd64.zip": {
-      "sha256": "e08ff5efa4f014b65c4aeb68efe9ef43dda77211eb2eb58effc50f03a2d1cc76",
-      "size": 38896187
+    "pandev-cli-plugin_2.5.28_Windows_amd64.zip": {
+      "sha256": "c2f5c8e6918c4abba1f3cb98b89cba7fa645ee4302c7569431622499a8d013c3",
+      "size": 38896179
     },
-    "pandev-cli-plugin_2.5.27_Windows_amd64_portable.zip": {
-      "sha256": "e0c453881b6ad189b92a6d13e8179f50bd8a2fb9b047537931c36686978559c4",
-      "size": 38174949
+    "pandev-cli-plugin_2.5.28_Windows_amd64_portable.zip": {
+      "sha256": "f1752960b3377e9f1f657ed1d0aea8f7cd0ee0e608aaae6734f90c7ce3f83d13",
+      "size": 38174944
     },
-    "pandev-cli-plugin_2.5.27_macOS_amd64.tar.gz": {
-      "sha256": "e9213e21c2b3b1013b96b9747ac0531babf6bceedb3cf50fbddb02e395ff63fb",
-      "size": 55279700
+    "pandev-cli-plugin_2.5.28_macOS_amd64.tar.gz": {
+      "sha256": "33b98ce7789bc9f3cd6058df9410d13db059eae7ff6ebd89e236abcf452568fc",
+      "size": 55279746
     },
-    "pandev-cli-plugin_2.5.27_macOS_arm64.tar.gz": {
-      "sha256": "a14ecc7cc27543b6372c7ae26b5753defa0ff96438c93c59c3b91826e7173916",
-      "size": 53909009
+    "pandev-cli-plugin_2.5.28_macOS_arm64.tar.gz": {
+      "sha256": "59c059f06733a04606bd773b856379e8ae8cad80d26bc47f209ede8d7b20fea0",
+      "size": 53909047
     }
   },
   "formula": {
     "path": "Formula/pandev-cli-plugin-beta.rb",
-    "sha256": "8bf0bf5fbe2879c10e75723c51ef76e8e65bc65d9b44f9165fc6c7668ed062e3",
+    "sha256": "986ae1d44070adf06b60af7f9d0031b99448f2933e4bc4872af922021b1f58ec",
     "size": 3011
   },
   "installers": {
     "install-experimental.sh": {
-      "sha256": "e35c9a54ca6b5d9e7712a87274300a95c2f8ab1a4dc0d4d594f229bd73f78a9b",
+      "sha256": "af53cd1398c3751a2b43d0b61092cc8db377ea7d322b05b2eda59bf77988f4cb",
       "size": 58188
     },
     "install-experimental.ps1": {
-      "sha256": "85e05d281469cd6eb7595f827052b4716d76ca15875d53c76601fe1a36eadbfa",
+      "sha256": "50ec7086cc202852362cd495e6eef9ab09d5877b74ed645fd99cbec87c03c519",
       "size": 38347
     }
   }

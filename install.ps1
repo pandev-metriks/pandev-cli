@@ -29,9 +29,9 @@
     copies - the install logic itself is channel-agnostic.
 
     Tokens replaced by the publish step (do NOT pre-fill them here):
-      2.5.22               - semantic version, e.g. 2.5.0
-      v2.5.22                   - release tag hosting the assets, e.g. v2.5.0-beta
-      59df9b4f4296bc5dfa1b427e01657ea885002d2395335ade185279374a0e1be6  - checksum of the Windows .zip asset
+      2.5.28               - semantic version, e.g. 2.5.0
+      v2.5.28                   - release tag hosting the assets, e.g. v2.5.0-beta
+      74f767cd26f4a6c16561ccad9a16bd42d05b29e06a7cb01de011a2904a2155b0  - checksum of the Windows .zip asset
       pandev-metriks/pandev-cli                  - repo whose GitHub release hosts the .zip
       Stable               - display label: Beta or Stable
 
@@ -48,10 +48,23 @@
     UNINSTALL (PDM-4862): the same script removes PanDev of any version, with
     or without the package still installed:
       & ([scriptblock]::Create((iwr -useb <url>))) -Uninstall
+
+    FROM A CHECKED ARCHIVE (PDM-5483): the automatic update runs this script
+    as a file, outside the MSIX package (a one-off Task Scheduler task), with
+    -From <folder>: the unpacked release zip that `pandev update` has already
+    checked against the signed update manifest. Nothing is downloaded; the
+    package, the PATH and the watcher are handled as in a normal install. Only
+    in this mode the script ends with an exit code: 0 - installed, 1 - not.
 #>
 param(
-    [switch] $Uninstall
+    [switch] $Uninstall,
+    # Called -From; the variable has a name of its own: under iex the parameters land in the
+    # user's session, and a $From of theirs must not be reset.
+    [Alias('From')] [string] $PandevFrom = ''
 )
+
+# Exit code for -From (the automatic update reads it); under iex nothing exits.
+$PandevInstallOutcome = @{ Code = 1 }
 
 # Wrap the whole installer in a scriptblock so any preference changes
 # (especially $ErrorActionPreference = 'Stop') stay scoped to the block.
@@ -133,6 +146,72 @@ param(
             $null = cmd.exe /c "npm ls -g --depth=0 pandev >nul 2>&1"
             $npxPackage = ($LASTEXITCODE -eq 0)
         }
+        # 0. An update being installed right now (PDM-5483): its Task Scheduler task would put the
+        #    package back and start the watcher after this. Waited for, up to 3 minutes - it holds
+        #    update-apply.lock in the package's LocalState while it installs. Then the task itself, if
+        #    it is still there: it removes itself when it starts, so one left is one that never ran.
+        function Test-ApplyLocked([string]$path) {
+            $fs = $null
+            try {
+                $fs = [System.IO.File]::Open($path, 'Open', 'ReadWrite', 'ReadWrite')
+            } catch {
+                return $false
+            }
+            try {
+                $fs.Lock(0, 1)
+                $fs.Unlock(0, 1)
+                return $false
+            } catch {
+                return $true
+            } finally {
+                $fs.Dispose()
+            }
+        }
+        $packagesDir = Join-Path $env:LOCALAPPDATA 'Packages'
+        $applyLocks = @(Get-ChildItem -LiteralPath $packagesDir -Directory -Filter 'PandevInc.PandevCLIPlugin_*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'LocalState\update-apply.lock' } |
+            Where-Object { Test-Path -LiteralPath $_ })
+        $deadline = (Get-Date).AddMinutes(3)
+        $announced = $false
+        while (@($applyLocks | Where-Object { Test-ApplyLocked $_ }).Count -gt 0 -and (Get-Date) -lt $deadline) {
+            if (-not $announced) {
+                Write-Note 'A PanDev update is being installed: waiting for it to finish (up to 3 min)...'
+                $announced = $true
+            }
+            Start-Sleep -Seconds 2
+        }
+        if (@($applyLocks | Where-Object { Test-ApplyLocked $_ }).Count -gt 0) {
+            Write-Left 'A PanDev update was still being installed after 3 minutes' 'Run this command again once it is done.'
+        } elseif ($announced) {
+            Write-Removed 'The running PanDev update finished first'
+        }
+        function Invoke-Schtasks([string[]]$arguments) {
+            # Windows PowerShell turns a native program's stderr into an error under 'Stop'
+            $saved = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $null = & (Join-Path $env:SystemRoot 'System32\schtasks.exe') $arguments 2>&1
+                return $LASTEXITCODE
+            } catch {
+                return -1
+            } finally {
+                $ErrorActionPreference = $saved
+            }
+        }
+        $sid = $null
+        try { $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { }
+        if ($sid) {
+            $updateTask = "PanDev update $sid"
+            if ((Invoke-Schtasks @('/Query', '/TN', $updateTask)) -eq 0) {
+                $null = Invoke-Schtasks @('/Delete', '/TN', $updateTask, '/F')
+                if ((Invoke-Schtasks @('/Query', '/TN', $updateTask)) -eq 0) {
+                    Write-Left "The PanDev update task is still in Task Scheduler ($updateTask)" 'Delete it in Task Scheduler (taskschd.msc).'
+                } else {
+                    Write-Removed 'Update task removed from Task Scheduler'
+                }
+            }
+        }
+
         $npxTraces = (@($npxMarks | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count -gt 0)
         $npxStays = $npxPackage -or $npxTraces
         # only the global package: npx pandev uninstall would leave it, only npm removes it
@@ -339,9 +418,9 @@ param(
     }
 
     # Templated by CI. Publish step rewrites these literals on every release.
-    $VERSION = '2.5.22'
-    $TAG = 'v2.5.22'
-    $WINDOWS_AMD64_SHA256 = '59df9b4f4296bc5dfa1b427e01657ea885002d2395335ade185279374a0e1be6'
+    $VERSION = '2.5.28'
+    $TAG = 'v2.5.28'
+    $WINDOWS_AMD64_SHA256 = '74f767cd26f4a6c16561ccad9a16bd42d05b29e06a7cb01de011a2904a2155b0'
 
     $REPO = 'pandev-metriks/pandev-cli'
     $ASSET_NAME = "pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
@@ -367,13 +446,19 @@ param(
 
     # Detect un-templated state by SHA *shape* (64 lowercase hex chars),
     # NOT by literal token equality. Earlier we compared against
-    # '59df9b4f4296bc5dfa1b427e01657ea885002d2395335ade185279374a0e1be6', but the publish step's str.replace runs
+    # '74f767cd26f4a6c16561ccad9a16bd42d05b29e06a7cb01de011a2904a2155b0', but the publish step's str.replace runs
     # over THE WHOLE FILE - including the literal token inside this check
     # - so after templating the comparison became
     # "$WINDOWS_AMD64_SHA256 -eq <the actual hash>", which is always true,
     # so the script always reported "installer not available" even on
     # successful builds. Length+regex check is immune to this self-replace.
-    if ($WINDOWS_AMD64_SHA256 -notmatch '^[a-f0-9]{64}$') {
+    if ($PandevFrom) {
+        $PandevFrom = $PandevFrom.TrimEnd('\')
+        if (-not (Test-Path -LiteralPath (Join-Path $PandevFrom 'install-pandev.ps1'))) {
+            Write-Host "ERROR: $PandevFrom has no install-pandev.ps1: -From takes the unpacked release archive." -ForegroundColor Red
+            return
+        }
+    } elseif ($WINDOWS_AMD64_SHA256 -notmatch '^[a-f0-9]{64}$') {
         Write-Host "ERROR: Windows installer is not available for v$VERSION." -ForegroundColor Red
         Write-Host "       The CI build for Windows failed for this release." -ForegroundColor Red
         Write-Host "       Try a newer version once it lands, or contact the team." -ForegroundColor Red
@@ -383,29 +468,38 @@ param(
     # -----------------------------------------------------------------------
     # Download + verify + extract + hand off
     # -----------------------------------------------------------------------
-    $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("pandev-install-" + [System.Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
-    $zipPath = Join-Path $tmpRoot $ASSET_NAME
+    # -From: the archive is unpacked and checked already, and the folder is not ours to delete.
+    $tmpRoot = $null
+    if (-not $PandevFrom) {
+        $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("pandev-install-" + [System.Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
+    }
 
     # Track success so the catch block can report cleanly without bubbling
     # an exception up into the user's session.
     $installSucceeded = $false
 
     try {
-        Write-Host "Downloading $ASSET_NAME..."
-        Invoke-WebRequest -UseBasicParsing -Uri $DOWNLOAD_URL -OutFile $zipPath
+        if ($PandevFrom) {
+            Write-Host "Installing from $PandevFrom (checked against the signed update manifest by pandev update)."
+            $installer = Join-Path $PandevFrom 'install-pandev.ps1'
+        } else {
+            $zipPath = Join-Path $tmpRoot $ASSET_NAME
+            Write-Host "Downloading $ASSET_NAME..."
+            Invoke-WebRequest -UseBasicParsing -Uri $DOWNLOAD_URL -OutFile $zipPath
 
-        Write-Host "Verifying checksum..."
-        $actualSha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        $expectedSha = $WINDOWS_AMD64_SHA256.ToLowerInvariant()
-        if ($actualSha -ne $expectedSha) {
-            throw "SHA256 mismatch for $ASSET_NAME. expected=$expectedSha actual=$actualSha"
+            Write-Host "Verifying checksum..."
+            $actualSha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $expectedSha = $WINDOWS_AMD64_SHA256.ToLowerInvariant()
+            if ($actualSha -ne $expectedSha) {
+                throw "SHA256 mismatch for $ASSET_NAME. expected=$expectedSha actual=$actualSha"
+            }
+
+            Write-Host "Extracting..."
+            Expand-Archive -Path $zipPath -DestinationPath $tmpRoot -Force
+
+            $installer = Join-Path $tmpRoot 'install-pandev.ps1'
         }
-
-        Write-Host "Extracting..."
-        Expand-Archive -Path $zipPath -DestinationPath $tmpRoot -Force
-
-        $installer = Join-Path $tmpRoot 'install-pandev.ps1'
         if (-not (Test-Path -LiteralPath $installer)) {
             throw "install-pandev.ps1 missing from $ASSET_NAME after extract."
         }
@@ -424,7 +518,17 @@ param(
         Write-Host ""
         Write-Host "Installing the package..." -ForegroundColor Cyan
 
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -NonInteractive
+        # The channel this copy was published for goes into the install receipt
+        # (PDM-5479). A typed array, not a splatted string: a string is passed
+        # to a native command character by character (beta 2.5.21).
+        [string[]] $installerArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-NonInteractive')
+        $channelId = switch ('Stable') { 'Stable' { 'prod' } 'Beta' { 'beta' } default { '' } }
+        if ($channelId) {
+            $installerArgs += @('-Channel', $channelId)
+        }
+        # Releases are PanDev's: a test certificate trusted on this computer is no pass (PDM-5483).
+        $installerArgs += @('-RequirePanDevPublisher')
+        & powershell.exe $installerArgs
         $installerCode = $LASTEXITCODE
         if ($installerCode -ne 0) {
             # Don't throw - that would propagate via iex back to the user
@@ -442,10 +546,12 @@ param(
         Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
         # Swallow the exception - don't propagate to caller's session.
     } finally {
-        try {
-            Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction Stop
-        } catch {
-            Write-Host "(temp directory $tmpRoot was left behind; delete manually if you care)" -ForegroundColor DarkGray
+        if ($tmpRoot) {
+            try {
+                Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Host "(temp directory $tmpRoot was left behind; delete manually if you care)" -ForegroundColor DarkGray
+            }
         }
     }
 
@@ -454,6 +560,8 @@ param(
         # caller's session continues unharmed.
         return
     }
+    # The package is in: everything below (PATH, the watcher) only warns.
+    $PandevInstallOutcome.Code = 0
 
     # -----------------------------------------------------------------------
     # Make the `pandev` command actually resolvable.
@@ -612,3 +720,9 @@ param(
     }
     Write-Host ""
 }
+
+if ($PandevFrom) {
+    exit $PandevInstallOutcome.Code
+}
+# under iex: nothing of this script stays in the user's session
+Remove-Variable -Name PandevInstallOutcome, PandevFrom -ErrorAction SilentlyContinue

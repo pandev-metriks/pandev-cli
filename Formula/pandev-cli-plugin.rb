@@ -8,30 +8,33 @@
 # Never edit the rendered copies by hand: the next release overwrites them.
 #
 # Tokens replaced by CI (do NOT pre-fill):
-#   2.5.22           semantic version, e.g. 2.5.0
-#   v2.5.22               release tag hosting the assets, e.g. v2.5.0
-#   44e7e4fc4339862642100fd4fbb5b002c30617930a559c8bda095953be52dc30 / 2a261bbbd429c913ad3af43a530847bf2069e6bd1e0c81c9259724fd8c5371d7 / fad255cb44ca803f48c7b17b74632d0c41f9ba4c596eceab453a1b15dcbb9d4b  asset checksums
+#   2.5.28           semantic version, e.g. 2.5.0
+#   v2.5.28               release tag hosting the assets, e.g. v2.5.0
+#   acd5114247b3f9215a4570b2dbda7be1ee443654db76a3cc6409ee23ff05b5c2 / af81a0ef2f98aee391a8bbad4ffa6beadae2da7f5a5f6a7bb0809aaeec951860 / ce59159401a86f1aafda8267614d4876ac11eda1e6b291d2247ced847145e54a  asset checksums
 class PandevCliPlugin < Formula
   desc "PanDev Metrics CLI"
   homepage "https://github.com/pandev-metriks/pandev-cli"
-  version "2.5.22"
+  version "2.5.28"
 
-  depends_on "jq"
-  depends_on "git"
+  # No dependencies, on purpose. Homebrew upgrades every outdated dependency of a formula it
+  # installs (a dependency counts as installed only at its latest version) and then their
+  # outdated dependents: one PanDev update upgraded jq, git and whatever depends on them on
+  # someone else's machine. Nothing here runs jq; git is the system one — Homebrew itself needs
+  # it (the Command Line Tools on macOS, the distro package on Linux).
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.22/pandev-cli-plugin_2.5.22_macOS_amd64.tar.gz"
-      sha256 "44e7e4fc4339862642100fd4fbb5b002c30617930a559c8bda095953be52dc30"
+      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.28/pandev-cli-plugin_2.5.28_macOS_amd64.tar.gz"
+      sha256 "acd5114247b3f9215a4570b2dbda7be1ee443654db76a3cc6409ee23ff05b5c2"
     else
-      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.22/pandev-cli-plugin_2.5.22_macOS_arm64.tar.gz"
-      sha256 "2a261bbbd429c913ad3af43a530847bf2069e6bd1e0c81c9259724fd8c5371d7"
+      url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.28/pandev-cli-plugin_2.5.28_macOS_arm64.tar.gz"
+      sha256 "af81a0ef2f98aee391a8bbad4ffa6beadae2da7f5a5f6a7bb0809aaeec951860"
     end
   end
 
   on_linux do
-    url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.22/pandev-cli-plugin_2.5.22_Linux_amd64.tar.gz"
-    sha256 "fad255cb44ca803f48c7b17b74632d0c41f9ba4c596eceab453a1b15dcbb9d4b"
+    url "https://github.com/pandev-metriks/pandev-cli/releases/download/v2.5.28/pandev-cli-plugin_2.5.28_Linux_amd64.tar.gz"
+    sha256 "ce59159401a86f1aafda8267614d4876ac11eda1e6b291d2247ced847145e54a"
   end
 
   # No `conflicts_with "pandev-cli-plugin-beta"`: to check it, brew loads the beta formula,

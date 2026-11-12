@@ -130,7 +130,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             arch: arm64
           - os: macos-15-intel
             arch: amd64
@@ -283,7 +283,15 @@ jobs:
 
       - name: Create tar.gz
         run: |
-          OS_NAME=$(echo "${{ matrix.os }}" | sed 's/ubuntu-latest/Linux/' | sed 's/macos-14/macOS/' | sed 's/macos-15-intel/macOS/')
+          # Имя ОС в имени архива — по семейству раннера, а не по точному ярлыку: формула, установщики
+          # и npm ждут ровно macOS и Linux. Замена по ярлыку ломалась при каждой смене раннера (macos-14
+          # GitHub снял 02.11.2026), а sed 's/macos-15/macOS/' задел бы и macos-15-intel — архив Intel
+          # назывался бы macOS-intel_amd64, и формула с npm потеряли бы Intel.
+          case "${{ matrix.os }}" in
+            macos-*) OS_NAME=macOS ;;
+            ubuntu-*) OS_NAME=Linux ;;
+            *) echo "::error::No OS name for the asset of runner ${{ matrix.os }}"; exit 1 ;;
+          esac
           FILE="pandev-cli-plugin_${VERSION}_${OS_NAME}_${{ matrix.arch }}.tar.gz"
 
           tar -czf "$FILE" -C app-staging .
@@ -654,7 +662,15 @@ jobs:
             exit 0
           fi
           git commit -m "Release v${VERSION}"
-          git push origin main
+          # main is also written by GitLab CI (workflow copies, PDM-5487): if it moved
+          # since checkout, replay our commit on top and try again.
+          for attempt in 1 2 3; do
+            if git push origin main; then exit 0; fi
+            echo "main moved on: rebasing onto origin/main (attempt $attempt/3)"
+            git pull --rebase --quiet origin main
+          done
+          echo "::error::could not push to main after 3 attempts"
+          exit 1
 
       # TRANSITION: keep existing brew clients updating through their old tap.
       - name: Commit and push legacy tap (transition)

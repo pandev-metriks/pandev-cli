@@ -316,8 +316,9 @@ jobs:
   # path. Driven by the `windows-installer-msix` Maven profile, which already
   # invokes build/windows-msix/build-windows-msix.ps1 internally.
   #
-  # Signing: the PanDev code signing certificate from SSL.com through
-  # eSigner CKA (PDM-5088), see ci/esigner-cka.ps1.
+  # Signing: the PanDev beta certificate, one for all betas, from the secrets
+  # BETA_SIGNING_PFX and BETA_SIGNING_PASSWORD - no eSigner signature spent.
+  # Prod signs with the SSL.com certificate (build-prod.yml).
   # ===========================================================================
   build-windows:
     name: Build Beta (windows-latest - amd64)
@@ -405,28 +406,21 @@ jobs:
         shell: pwsh
         run: python ci/smoke/watcher-idle.py 'target\installer\pandev\pandev-watcher.exe'
 
-      # Подпись настоящим сертификатом PanDev от SSL.com (PDM-5088). Ключ живёт
-      # в облаке SSL.com: eSigner CKA кладёт сертификат в CurrentUser\My, и
-      # signtool подписывает через него с меткой времени. Подписывается только
-      # MSIX — одна подпись eSigner на сборку. Стоит после смоуков и E2E: они
-      # проверяют app-image, от подписи не зависят, и упади они — подпись не
-      # потрачена. Секреты — только через env: логи этого репозитория публичны.
-      - name: Load the code signing certificate (eSigner CKA)
+      # Бета подписывается сертификатом беты, а не SSL.com: подписи eSigner
+      # платные, их тратит только прод. Сертификат один на все беты, с тем же
+      # Subject, что у настоящего (пакет — то же приложение, что прод), его
+      # отпечаток зашит в install-pandev.ps1. Windows ставит такой пакет, когда
+      # администратор один раз доверил сертификат на машине; команду печатает
+      # установщик. Секреты — только через env: логи этого репозитория публичны.
+      - name: Sign MSIX (beta certificate)
         shell: pwsh
         env:
-          ES_USERNAME: ${{ secrets.ES_USERNAME }}
-          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
-        run: ./ci/esigner-cka.ps1
-
-      # -RequireTrusted: пакет, который заставил бы людей доверять сертификату
-      # вручную, не публикуется.
-      - name: Sign MSIX
-        shell: pwsh
+          BETA_SIGNING_PFX: ${{ secrets.BETA_SIGNING_PFX }}
+          BETA_SIGNING_PASSWORD: ${{ secrets.BETA_SIGNING_PASSWORD }}
         run: |
           $msix = Get-ChildItem 'target\installer-msix\pandev-*.msix' | Select-Object -First 1
           if (-not $msix) { throw 'No MSIX produced by maven build.' }
-          ./build/windows-msix/sign-msix.ps1 -MsixPath $msix.FullName -Thumbprint $env:ESIGNER_THUMBPRINT -RequireTrusted
+          ./build/windows-msix/sign-msix.ps1 -MsixPath $msix.FullName -BetaCertificate
 
       - name: Package zip
         shell: pwsh

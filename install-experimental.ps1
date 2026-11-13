@@ -18,8 +18,10 @@
       4. Invoke install-pandev.ps1 from the extracted bundle. That script
          checks the signature, carries an install signed by the old test
          certificate over to the new package, and runs Add-AppxPackage.
-         No administrator: releases are signed by PanDev's SSL.com
-         certificate (PDM-5088).
+         No administrator for prod: it is signed by PanDev's SSL.com
+         certificate (PDM-5088). A beta is signed by the PanDev beta
+         certificate: an administrator trusts it once per computer, and
+         install-pandev.ps1 prints the command when it is not trusted yet.
 
     Source-of-truth lives in release/install-experimental.ps1 of the GitLab
     repository pandev-metrics-cli. Both release CI workflows render it on
@@ -29,9 +31,9 @@
     copies - the install logic itself is channel-agnostic.
 
     Tokens replaced by the publish step (do NOT pre-fill them here):
-      2.5.28               - semantic version, e.g. 2.5.0
-      v2.5.28-beta                   - release tag hosting the assets, e.g. v2.5.0-beta
-      c2f5c8e6918c4abba1f3cb98b89cba7fa645ee4302c7569431622499a8d013c3  - checksum of the Windows .zip asset
+      2.5.30               - semantic version, e.g. 2.5.0
+      v2.5.30-beta                   - release tag hosting the assets, e.g. v2.5.0-beta
+      bc6c34f58d26960e1408a2b999ea7666ba2dd5d2901219210a642f9bf86470fc  - checksum of the Windows .zip asset
       pandev-metriks/pandev-cli                  - repo whose GitHub release hosts the .zip
       Beta               - display label: Beta or Stable
 
@@ -418,9 +420,9 @@ $PandevInstallOutcome = @{ Code = 1 }
     }
 
     # Templated by CI. Publish step rewrites these literals on every release.
-    $VERSION = '2.5.28'
-    $TAG = 'v2.5.28-beta'
-    $WINDOWS_AMD64_SHA256 = 'c2f5c8e6918c4abba1f3cb98b89cba7fa645ee4302c7569431622499a8d013c3'
+    $VERSION = '2.5.30'
+    $TAG = 'v2.5.30-beta'
+    $WINDOWS_AMD64_SHA256 = 'bc6c34f58d26960e1408a2b999ea7666ba2dd5d2901219210a642f9bf86470fc'
 
     $REPO = 'pandev-metriks/pandev-cli'
     $ASSET_NAME = "pandev-cli-plugin_${VERSION}_Windows_amd64.zip"
@@ -446,7 +448,7 @@ $PandevInstallOutcome = @{ Code = 1 }
 
     # Detect un-templated state by SHA *shape* (64 lowercase hex chars),
     # NOT by literal token equality. Earlier we compared against
-    # 'c2f5c8e6918c4abba1f3cb98b89cba7fa645ee4302c7569431622499a8d013c3', but the publish step's str.replace runs
+    # 'bc6c34f58d26960e1408a2b999ea7666ba2dd5d2901219210a642f9bf86470fc', but the publish step's str.replace runs
     # over THE WHOLE FILE - including the literal token inside this check
     # - so after templating the comparison became
     # "$WINDOWS_AMD64_SHA256 -eq <the actual hash>", which is always true,

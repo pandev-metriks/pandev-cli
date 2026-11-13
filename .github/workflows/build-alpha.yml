@@ -300,8 +300,8 @@ jobs:
   # invokes build/windows-msix/build-windows-msix.ps1 internally.
   #
   # Signing: a throwaway self-signed certificate with the release Subject
-  # (PDM-5088) - no secrets, no eSigner quota. Beta and prod sign with the
-  # real SSL.com certificate.
+  # (PDM-5088) - no secrets, no eSigner quota. Prod signs with the real
+  # SSL.com certificate, beta with the PanDev beta certificate.
   # ===========================================================================
   build-windows:
     name: Build Alpha (windows-latest - amd64)
@@ -353,7 +353,8 @@ jobs:
       # Альфа подписывается одноразовым самоподписанным сертификатом с тем же
       # Subject (PDM-5088): без секретов и без расхода лимита eSigner. Ставится
       # она только после того, как администратор доверит этот сертификат, —
-      # install-pandev.ps1 печатает команду. Бета и прод — настоящий сертификат.
+      # install-pandev.ps1 печатает команду. Прод — настоящий сертификат SSL.com,
+      # бета — сертификат беты, один на все беты.
       - name: Sign MSIX (throwaway certificate)
         shell: pwsh
         run: |

@@ -192,8 +192,8 @@ jobs:
           #   видит; jcmd <pid> и jstack работают, как работали.
           # Роли вотчера и MCP — те же у лаунчеров Windows (src/main/jpackage) и .deb, у вотчера .deb
           # и возврат памяти. Роли демона там нет: pandev.exe на Windows и главный лаунчер .deb одни
-          # на команды и демона. Сторож — MemoryBudgetTest; что JVM демона с этими флагами стартует,
-          # проверяет ci/smoke/daemon-start.sh на артефакте. Переопределяется снаружи целиком:
+          # на команды и демона. Сторож — MemoryBudgetTest; роль демона доживает до вырезания
+          # npx-канала (PDM-5805), смоука у неё больше нет. Переопределяется снаружи целиком:
           # PANDEV_JVM="-Xmx2g" pandev ...
           case "${1:-} ${2:-}" in
             "--watcher "*) PANDEV_ROLE=watcher ;;
@@ -290,13 +290,6 @@ jobs:
       # ридер, съехавший прайслист и падения на реальном пути исполнения.
       - name: E2E — cost on a synthetic log
         run: sh ci/smoke/e2e-cost.sh smoke/runtime/bin/java -jar smoke/lib/pandev-myapp.jar
-
-      # Демон дашборда артефакта (PDM-5183): лаунчер даёт роли dashboard --serve свои флаги — начальную
-      # кучу, сжатие сразу, на Linux возврат нативной памяти. Юнит-тесты видят только текст лаунчера, а
-      # JVM с опечаткой во флагах не стартует вовсе: автостарт npx-канала перестал бы подниматься у всех.
-      # Поднимаем демона тем же лаунчером, что и шим автостарта, в отдельном доме, ждём /healthz, гасим.
-      - name: Smoke — dashboard daemon starts
-        run: sh ci/smoke/daemon-start.sh smoke/bin/pandev
 
       # Вотчер в покое на синтетическом доме с большой историей (PDM-5126): проверки журналов Claude,
       # запуски sqlite3 и git, чтения файлов, CPU и RSS — в бюджете. Вотчер тот, что уедет клиентам:
@@ -662,4 +655,9 @@ jobs:
       - name: Repack tarballs into npm packages and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: node release/npm/repack.mjs --version "$VERSION" --assets release-assets --tag beta
+        # Прощальная версия npx (PDM-5804): тег latest — той же версии, все версии пяти пакетов —
+        # deprecated. После неё npm-канала нет (PDM-5805 убирает этот джоб целиком).
+        run: >-
+          node release/npm/repack.mjs --version "$VERSION" --assets release-assets --tag beta
+          --also-tag latest
+          --deprecate "npx pandev is discontinued. Remove it: npx pandev uninstall"

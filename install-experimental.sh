@@ -14,12 +14,12 @@
 #  edit the rendered copies by hand.
 #
 #  Tokens replaced by the publish step (do NOT pre-fill them here):
-#    2.5.34               — semantic version, e.g. 2.5.0
-#    v2.5.34-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
+#    2.5.35               — semantic version, e.g. 2.5.0
+#    v2.5.35-beta                   — release tag hosting the assets, e.g. v2.5.0-beta
 #    Beta               — human-readable channel name: Beta | Stable
 #    pandev-cli-plugin-beta               — formula name: pandev-cli-plugin[-beta]
-#    e0f20d2659e241cea5f3fe7fe37cf7c24a0c8e0aa090d4bac464e7b721774795  — checksum of the Windows .zip asset
-#    be9c45fbf436ccfa054abcd2bfad950b8db6d59f06cfd1252f369f1bad046430 / 055e6e97e8fcc09e6809199c86c085e93010857ecf688e598929e2e9ccee88c0 / 999847a72415dfb26c8de18c82126e07edde0a7fd6ca765de8de8c5066a91cce
+#    d881b791f16db2026661380d8c3a3707ed7990663e42a295e98d6574175b22da  — checksum of the Windows .zip asset
+#    8279c8508bbc841ba791a4e3e0d273c46e6bb11868e85c432665669dd6149eb8 / 4972864a77c99f3e807c0facb92a08d24923a59778653096462cb43265e443f8 / e7f3500f9358d4fa267f649221b7ca3c7f31199424e2a14e45d309dc0b979f2a
 #                            — checksums of the tar.gz assets (the same tokens the
 #                              Formula uses); the direct install and the Homebrew
 #                              pre-check verify the download against them (PDM-5479)
@@ -39,8 +39,8 @@
 # =============================================================================
 set -e
 
-VERSION="2.5.34"
-TAG="v2.5.34-beta"
+VERSION="2.5.35"
+TAG="v2.5.35-beta"
 CHANNEL="Beta"
 FORMULA_NAME="pandev-cli-plugin-beta"
 
@@ -70,14 +70,14 @@ BIN_LINK="$BIN_DIR/pandev"
 
 # Windows-only: SHA256 of the .zip asset. Used to verify the download in the
 # `curl | bash` path where there's no Homebrew Formula to do it for us.
-WINDOWS_AMD64_SHA256="e0f20d2659e241cea5f3fe7fe37cf7c24a0c8e0aa090d4bac464e7b721774795"
+WINDOWS_AMD64_SHA256="d881b791f16db2026661380d8c3a3707ed7990663e42a295e98d6574175b22da"
 
 # macOS/Linux: SHA256 of the tar.gz assets. The Formula verifies its own download, but the
 # direct install had no check at all (PDM-5479), and the Homebrew path now downloads the
 # archive once before anything is removed.
-LINUX_AMD64_SHA256="be9c45fbf436ccfa054abcd2bfad950b8db6d59f06cfd1252f369f1bad046430"
-MACOS_ARM64_SHA256="055e6e97e8fcc09e6809199c86c085e93010857ecf688e598929e2e9ccee88c0"
-MACOS_AMD64_SHA256="999847a72415dfb26c8de18c82126e07edde0a7fd6ca765de8de8c5066a91cce"
+LINUX_AMD64_SHA256="8279c8508bbc841ba791a4e3e0d273c46e6bb11868e85c432665669dd6149eb8"
+MACOS_ARM64_SHA256="4972864a77c99f3e807c0facb92a08d24923a59778653096462cb43265e443f8"
+MACOS_AMD64_SHA256="e7f3500f9358d4fa267f649221b7ca3c7f31199424e2a14e45d309dc0b979f2a"
 
 # `curl ... | bash -s -- --uninstall` removes PanDev instead of installing it.
 MODE="install"
